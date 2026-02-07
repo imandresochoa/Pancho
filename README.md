@@ -1,48 +1,60 @@
-# Pancho 🤠
-**A Modern macOS Game Manager for Steam Windows Games**
+# Pancho 🍷🎮
 
-Pancho is a native macOS application built with **Tauri**, **React**, and **Shadcn UI**. It is designed to help you organize and launch Windows games on macOS using Apple's Game Porting Toolkit (GPTK) or Wine.
+**Pancho** is a lightweight, high-performance Windows compatibility manager for macOS. Built with Tauri and Rust, it provides a native interface for managing Wine and Apple's Game Porting Toolkit (GPTK) through an intuitive "Bottle" system.
+
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)
+![Built with](https://img.shields.io/badge/built%20with-Tauri%20%2F%20Rust%20%2F%20React-orange.svg)
+
+## ✨ Features
+
+- **📦 Bottle Management:** Create isolated Windows environments (Wine prefixes) for different apps or games.
+- **🚀 Gaming Optimizations:** 
+  - **ESync:** Reduces CPU overhead in multi-threaded games.
+  - **D3DMetal:** Deep integration with Apple's Game Porting Toolkit.
+  - **Metal HUD:** Real-time performance monitoring (FPS, GPU load).
+- **🔍 Smart Scanner:** Automatically detects installed `.exe` files and Steam within your bottles.
+- **🛡️ Binary Analysis:** Deep PE analysis (Architecture, Entry Point, Sections) before launching.
+- **📁 Native Integration:** Open bottle files directly in Finder and manage installers with a native UI.
+
+## 🛠️ Prerequisites
+
+To use Pancho, you need a Wine runner or GPTK installed. We recommend using Homebrew:
+
+```bash
+# Recommended for Gaming
+brew install --cask whisky-wine
+
+# Or standard Wine
+brew install --cask wine-stable
+```
 
 ## 🚀 Getting Started
 
-### Prerequisites
+1. **Clone the Repo:**
+   ```bash
+   git clone https://github.com/andresochoa/Pancho.git
+   cd Pancho
+   ```
+2. **Install Dependencies:**
+   ```bash
+   npm install
+   ```
+3. **Run in Development:**
+   ```bash
+   npm run tauri dev
+   ```
 
-1.  **Node.js**: [Download](https://nodejs.org/)
-2.  **Rust** (Required for Tauri):
-    ```bash
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-    ```
-    *Restart your terminal after installing Rust.*
+## 🏗️ Tech Stack
 
-### Installation
+- **Frontend:** React 19, Tailwind CSS, Lucide React, Radix UI.
+- **Backend:** Rust, Tauri v2.
+- **Binary Parsing:** `goblin`.
+- **Process Orchestration:** Custom Wine/GPTK runner.
 
-1.  Clone the repository (or open this folder).
-2.  Install dependencies:
-    ```bash
-    npm install
-    ```
+## 📄 License
 
-### Running the App
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-Start the development server:
-```bash
-npm run tauri dev
-```
-
-This will launch the native macOS application window.
-
-## 🛠 Tech Stack
-
-*   **Framework:** [Tauri v2](https://tauri.app) (Rust + Webview)
-*   **Frontend:** React + TypeScript + Vite
-*   **Styling:** Tailwind CSS
-*   **UI Library:** Shadcn UI (Radix Primitives)
-*   **Icons:** Lucide React
-
-## ⚠️ Note on Game Compatibility
-
-This prototype contains the **User Interface**. To actually launch games like *No Rest for the Wicked*, you will need to integrate the backend with a GPTK installation.
-
-Future updates will include:
-*   Auto-detection of Steam Library.
-*   `subprocess` execution of `gameportingtoolkit` command.
+---
+*Built with ❤️ for the macOS gaming community.*
