@@ -53,6 +53,14 @@ pub fn run_executable(exe_path: &str, prefix_path: &Path) -> Result<RunResult, S
            .env("WINEESYNC", "1")           // Improve multi-threading performance
            .env("MTL_HUD_ENABLED", "1")     // Show FPS and GPU metrics
            .env("WINEDEBUG", "-all")        // Disable debug logs to save CPU cycles
+           
+           // CRITICAL: Force native DirectX translation for D3DMetal/GPTK
+           .env("WINEDLLOVERRIDES", "d3d11,dxgi,d3d12,d3d9=n,b")
+           
+           // MoltenVK / Metal Resiliency
+           .env("MVK_CONFIG_RESILIENT_REPORTING", "1")
+           .env("WINE_D3D11_IGNORE_DXGI_CONTEXT", "1")
+           
            .arg(exe_path);
 
     command.spawn()

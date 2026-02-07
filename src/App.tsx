@@ -1,35 +1,27 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Gamepad2, Terminal, FileCode, Play, Zap, Plus, Wine, ArrowLeft, RefreshCw, Box, X, FolderOpen, MoreVertical } from "lucide-react";
+import * as Icons from "lucide-react";
 
 interface Bottle {
   id: string;
   name: string;
   path: string;
   created_at: number;
+  pinned_apps?: DetectedApp[];
 }
 
 interface DetectedApp {
   name: string;
   exe_path: string;
-}
-
-interface ExecutableInfo {
-  path: string;
-  machine: string;
-  entry_point: number;
-  sections: number;
-  is_64_bit: boolean;
+  is_priority: boolean;
 }
 
 function App() {
   const [bottles, setBottles] = useState<Bottle[]>([]);
   const [selectedBottle, setSelectedBottle] = useState<Bottle | null>(null);
   const [installedApps, setInstalledApps] = useState<DetectedApp[]>([]);
-  const [exeInfo, setExeInfo] = useState<ExecutableInfo | null>(null);
   const [log, setLog] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newBottleName, setNewBottleName] = useState("");
@@ -39,15 +31,15 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (selectedBottle) {
+    if (selectedBottle?.id) {
       handleScanApps();
     }
-  }, [selectedBottle]);
+  }, [selectedBottle?.id]);
 
   const loadBottles = async () => {
     try {
       const list = await invoke<Bottle[]>("get_bottles");
-      setBottles(list);
+      setBottles(list || []);
     } catch (e) {
       addToLog(`Error loading bottles: ${e}`);
     }
@@ -60,9 +52,8 @@ function App() {
       setNewBottleName("");
       setShowCreateModal(false);
       loadBottles();
-      addToLog(`Created bottle: ${newBottleName}`);
     } catch (e) {
-      addToLog(`Error creating bottle: ${e}`);
+      addToLog(`Error creating: ${e}`);
     }
   };
 
@@ -71,8 +62,7 @@ function App() {
     setScanning(true);
     try {
       const apps = await invoke<DetectedApp[]>("scan_for_apps", { bottleId: selectedBottle.id });
-      setInstalledApps(apps);
-      addToLog(`Found ${apps.length} apps in ${selectedBottle.name}`);
+      setInstalledApps(apps || []);
     } catch (e) {
       addToLog(`Scan error: ${e}`);
     } finally {
@@ -80,43 +70,11 @@ function App() {
     }
   };
 
-  const handleOpenFolder = async () => {
+  const handleRun = async (path: string) => {
     if (!selectedBottle) return;
     try {
-      await invoke("open_bottle_dir", { bottleId: selectedBottle.id });
-      addToLog(`Opening folder for ${selectedBottle.name}`);
-    } catch (e) {
-      addToLog(`Error opening folder: ${e}`);
-    }
-  };
-
-  const handleSelectExe = async () => {
-    if (!selectedBottle) return;
-    try {
-      const selected = await open({
-        multiple: false,
-        filters: [{ name: 'Windows Executable', extensions: ['exe', 'msi'] }]
-      });
-
-      if (selected && typeof selected === 'string') {
-        setLoading(true);
-        const info = await invoke<ExecutableInfo>("launch_installer", { path: selected });
-        setExeInfo(info);
-        setLoading(false);
-        addToLog(`Analyzed: ${selected}`);
-      }
-    } catch (err) {
-      addToLog(`Error: ${err}`);
-      setLoading(false);
-    }
-  };
-
-  const handleRun = async (path?: string) => {
-    const targetPath = path || exeInfo?.path;
-    if (!targetPath || !selectedBottle) return;
-    try {
-      addToLog(`Launching ${targetPath.split('/').pop()}...`);
-      await invoke("run_installer", { path: targetPath, bottleId: selectedBottle.id });
+      addToLog(`Launching ${path.split('/').pop()}...`);
+      await invoke("run_installer", { path, bottleId: selectedBottle.id });
     } catch (err) {
       addToLog(`Launch Error: ${err}`);
     }
@@ -126,227 +84,124 @@ function App() {
     setLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
   };
 
-  return (
-    <div className="flex flex-col h-screen bg-background text-foreground font-sans dark select-none">
-       <header data-tauri-drag-region className="h-14 flex items-center px-6 border-b border-border/40 bg-card/50 backdrop-blur-xl shrink-0">
-          <div className="flex items-center gap-2 text-primary">
-            <Gamepad2 className="h-6 w-6" />
-            <span className="font-bold text-lg tracking-tight">Pancho</span>
+  // --- SAFE RENDERING LOGIC ---
+  if (!selectedBottle) {
+    return (
+      <div className="h-screen w-screen bg-slate-950 text-white p-8 overflow-y-auto">
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-4xl font-black tracking-tighter">YOUR BOTTLES</h1>
+          <button onClick={() => setShowCreateModal(true)} className="bg-blue-600 px-6 py-2 rounded-xl font-bold hover:bg-blue-500 transition-all">NEW BOTTLE</button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {bottles.map(b => (
+            <div key={b.id} onClick={() => setSelectedBottle(b)} className="p-8 bg-slate-900 border border-white/5 rounded-3xl hover:border-blue-500/50 cursor-pointer transition-all group">
+              <Icons.Wine className="mb-4 text-slate-600 group-hover:text-blue-400 transition-colors" size={40} />
+              <h3 className="text-2xl font-bold">{b.name}</h3>
+              <p className="text-[10px] text-slate-500 mt-2 font-mono truncate">{b.path}</p>
+            </div>
+          ))}
+        </div>
+
+        {showCreateModal && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-6 z-50">
+            <div className="bg-slate-900 border border-white/10 p-10 rounded-[2.5rem] w-full max-w-md space-y-6 shadow-2xl">
+              <h2 className="text-2xl font-bold">New Bottle</h2>
+              <input autoFocus value={newBottleName} onChange={e => setNewBottleName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCreateBottle()} placeholder="Name..." className="w-full bg-slate-800 border-white/5 p-4 rounded-2xl focus:ring-2 ring-blue-500 outline-none" />
+              <div className="flex gap-3">
+                <button onClick={() => setShowCreateModal(false)} className="flex-1 p-4 font-bold opacity-50">CANCEL</button>
+                <button onClick={handleCreateBottle} className="flex-1 bg-blue-600 p-4 rounded-2xl font-bold">CREATE</button>
+              </div>
+            </div>
           </div>
-       </header>
+        )}
+      </div>
+    );
+  }
 
-       <main className="flex-1 overflow-hidden flex flex-col p-6 relative">
-          {!selectedBottle ? (
-            <div className="space-y-6">
-               <div className="flex items-center justify-between">
-                  <h2 className="text-3xl font-bold tracking-tight">Your Bottles</h2>
-                  <button 
-                    onClick={() => setShowCreateModal(true)}
-                    className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg font-bold hover:bg-primary/90 transition-all shadow-lg shadow-primary/20"
-                  >
-                    <Plus size={18} /> New Bottle
-                  </button>
-               </div>
+  // --- BOTTLE DETAIL VIEW ---
+  return (
+    <div className="h-screen w-screen bg-slate-950 text-white flex flex-col overflow-hidden">
+      <header className="h-16 border-b border-white/5 flex items-center px-6 gap-4 shrink-0 bg-slate-900/50">
+        <button onClick={() => setSelectedBottle(null)} className="p-2 hover:bg-slate-800 rounded-full"><Icons.ArrowLeft size={24} /></button>
+        <h1 className="text-xl font-black uppercase tracking-tight">{selectedBottle.name}</h1>
+        <div className="ml-auto flex gap-2">
+          <button onClick={() => invoke("open_bottle_dir", { bottleId: selectedBottle.id })} className="bg-slate-800 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2"><Icons.FolderOpen size={14} /> FILES</button>
+          <button onClick={handleScanApps} className={`bg-slate-800 p-2 rounded-lg ${scanning ? 'animate-spin' : ''}`}><Icons.RefreshCw size={18} /></button>
+        </div>
+      </header>
 
-               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {bottles.map(bottle => (
-                    <div 
-                      key={bottle.id}
-                      onClick={() => setSelectedBottle(bottle)}
-                      className="p-6 bg-card border border-border/60 rounded-2xl hover:border-primary/50 cursor-pointer transition-all group relative overflow-hidden"
-                    >
-                       <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <MoreVertical size={16} className="text-muted-foreground" />
-                       </div>
-                       <Wine className="mb-4 text-muted-foreground group-hover:text-primary transition-colors" size={32} />
-                       <h3 className="text-xl font-bold">{bottle.name}</h3>
-                       <p className="text-[10px] text-muted-foreground mt-1 truncate opacity-60 font-mono tracking-tighter">
-                          {bottle.path}
-                       </p>
+      <div className="flex-1 flex overflow-hidden p-6 gap-6">
+        <div className="flex-1 overflow-y-auto space-y-8 pr-2">
+          {/* Main App Grid */}
+          <section className="space-y-4">
+            <h2 className="text-[10px] font-black text-slate-500 tracking-widest uppercase">Detected Applications</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {installedApps.length > 0 ? installedApps.map((app, i) => (
+                <div key={i} className="bg-slate-900 border border-white/5 p-6 rounded-3xl flex items-center justify-between group hover:border-blue-500/30 transition-all">
+                  <div className="flex items-center gap-4 overflow-hidden">
+                    <div className="p-3 bg-slate-800 rounded-2xl text-blue-400 group-hover:bg-blue-600 group-hover:text-white transition-all"><Icons.Box size={24} /></div>
+                    <div className="overflow-hidden">
+                      <p className="font-bold text-lg truncate">{app.name}</p>
+                      <p className="text-[10px] text-slate-500 truncate font-mono">{app.exe_path.split('/').pop()}</p>
                     </div>
-                  ))}
-                  {bottles.length === 0 && (
-                     <div className="col-span-full py-20 text-center border-2 border-dashed border-border rounded-3xl bg-secondary/10">
-                        <Wine className="mx-auto text-muted-foreground/20 mb-4" size={48} />
-                        <p className="text-muted-foreground font-medium">No bottles yet. Create one to get started.</p>
-                     </div>
-                  )}
-               </div>
-
-               {/* Create Modal */}
-               {showCreateModal && (
-                 <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-6">
-                    <div className="bg-card border border-border p-8 rounded-3xl shadow-2xl w-full max-w-md space-y-6 animate-in fade-in zoom-in-95 duration-200">
-                       <div className="flex items-center justify-between">
-                          <h3 className="text-xl font-bold">New Bottle</h3>
-                          <button onClick={() => setShowCreateModal(false)} className="hover:bg-secondary p-1 rounded-full"><X size={20}/></button>
-                       </div>
-                       <div className="space-y-2">
-                          <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Bottle Name</label>
-                          <input 
-                            autoFocus
-                            type="text" 
-                            value={newBottleName}
-                            onChange={(e) => setNewBottleName(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleCreateBottle()}
-                            placeholder="e.g. Steam Games"
-                            className="w-full bg-secondary border border-border px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50"
-                          />
-                       </div>
-                       <button 
-                        onClick={handleCreateBottle}
-                        className="w-full bg-primary text-primary-foreground py-3 rounded-xl font-bold hover:bg-primary/90 transition-colors shadow-lg shadow-primary/20"
-                       >
-                         Create Bottle
-                       </button>
-                    </div>
-                 </div>
-               )}
+                  </div>
+                  <button onClick={() => handleRun(app.exe_path)} className="p-4 bg-blue-600 rounded-2xl hover:scale-110 active:scale-95 transition-all shadow-lg shadow-blue-600/20"><Icons.Play size={20} fill="currentColor" /></button>
+                </div>
+              )) : (
+                <div className="col-span-full border-2 border-dashed border-white/5 py-20 rounded-3xl text-center text-slate-600">
+                  <p className="italic">No apps found yet. Use the button below to install something.</p>
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="flex-1 flex flex-col space-y-6 animate-in fade-in slide-in-from-left-4 overflow-hidden">
-               <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <button onClick={() => { setSelectedBottle(null); setExeInfo(null); setInstalledApps([]); }} className="p-2 hover:bg-secondary rounded-full transition-colors">
-                      <ArrowLeft size={24} />
-                    </button>
-                    <div>
-                       <h2 className="text-3xl font-bold tracking-tight">{selectedBottle.name}</h2>
-                       <p className="text-[10px] text-muted-foreground font-mono">ID: {selectedBottle.id}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                     <button 
-                        onClick={handleOpenFolder}
-                        className="flex items-center gap-2 px-3 py-2 bg-secondary/50 hover:bg-secondary text-foreground rounded-lg text-sm font-medium transition-colors"
-                        title="Open in Finder"
-                     >
-                        <FolderOpen size={16} /> <span>Files</span>
-                     </button>
-                     <button 
-                        onClick={handleScanApps} 
-                        className={`p-2 rounded-lg hover:bg-secondary transition-all ${scanning ? 'animate-spin' : ''}`}
-                        title="Refresh apps"
-                     >
-                        <RefreshCw size={18} />
-                     </button>
-                  </div>
-               </div>
+          </section>
 
-               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 overflow-hidden">
-                  <div className="lg:col-span-2 space-y-6 overflow-y-auto pr-2 pb-6">
-                     {/* Installed Apps */}
-                     <div className="space-y-4">
-                        <h4 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Installed Applications</h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                           {installedApps.map((app, i) => (
-                             <div 
-                               key={i}
-                               className="p-4 bg-card/40 border border-border/40 rounded-xl flex items-center justify-between group hover:border-primary/40 transition-all shadow-sm"
-                             >
-                                <div className="flex items-center gap-3 overflow-hidden">
-                                   <div className="p-2 bg-secondary rounded-lg text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-colors shrink-0">
-                                      <Box size={20} />
-                                   </div>
-                                   <div className="overflow-hidden">
-                                      <p className="font-bold truncate text-sm">{app.name}</p>
-                                      <p className="text-[10px] text-muted-foreground truncate font-mono">{app.exe_path.split('/').pop()}</p>
-                                   </div>
-                                </div>
-                                <button 
-                                  onClick={() => handleRun(app.exe_path)}
-                                  className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg hover:bg-emerald-500 hover:text-white transition-all shadow-lg shadow-emerald-500/10 shrink-0"
-                                >
-                                   <Play size={16} fill="currentColor" />
-                                </button>
-                             </div>
-                           ))}
-                           {installedApps.length === 0 && !scanning && (
-                             <div className="col-span-full py-12 text-center border border-dashed border-border rounded-2xl bg-secondary/5">
-                                <p className="text-sm text-muted-foreground italic">No applications detected. Install one below.</p>
-                             </div>
-                           )}
-                        </div>
-                     </div>
+          {/* Installer Section */}
+          <section className="space-y-4">
+            <h2 className="text-[10px] font-black text-slate-500 tracking-widest uppercase">Setup</h2>
+            <button 
+              onClick={async () => {
+                const selected = await open({ multiple: false, filters: [{ name: 'EXE', extensions: ['exe'] }] });
+                if (selected && typeof selected === 'string') handleRun(selected);
+              }}
+              className="w-full border-2 border-dashed border-white/10 p-12 rounded-[2rem] hover:bg-blue-600/5 hover:border-blue-500/20 transition-all text-center flex flex-col items-center gap-3"
+            >
+              <Icons.Plus className="text-blue-500" size={32} />
+              <span className="font-bold opacity-60">RUN NEW INSTALLER (.EXE)</span>
+            </button> section
+          </section>
+        </div>
 
-                     {/* Installer Section */}
-                     <div className="space-y-4">
-                        <h4 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Run New Installer / Executable</h4>
-                        {!exeInfo ? (
-                           <button 
-                            onClick={handleSelectExe}
-                            disabled={loading}
-                            className="w-full border-2 border-dashed border-border rounded-2xl p-10 text-center space-y-3 hover:border-primary/40 hover:bg-primary/5 transition-all flex flex-col items-center justify-center group"
-                           >
-                              <div className="p-3 bg-secondary rounded-full group-hover:bg-primary/10 group-hover:text-primary transition-colors">
-                                 <Plus size={24} />
-                              </div>
-                              <div>
-                                 <p className="text-sm font-bold">{loading ? "Analyzing..." : "Select Windows Executable"}</p>
-                                 <p className="text-xs text-muted-foreground">.exe or .msi installers are supported</p>
-                              </div>
-                           </button>
-                        ) : (
-                           <div className="bg-card border border-border rounded-2xl p-6 space-y-6 shadow-xl animate-in zoom-in-95 duration-200">
-                              <div className="flex items-center justify-between">
-                                 <div className="flex items-center gap-3">
-                                   <FileCode className="text-blue-400" size={24} />
-                                   <div>
-                                      <h3 className="font-bold truncate max-w-[200px] text-sm">{exeInfo.path.split('/').pop()}</h3>
-                                      <p className="text-[10px] text-muted-foreground uppercase">{exeInfo.machine} • {exeInfo.is_64_bit ? '64-bit' : '32-bit'}</p>
-                                   </div>
-                                 </div>
-                                 <button onClick={() => setExeInfo(null)} className="text-xs text-primary hover:underline font-bold">Change</button>
-                              </div>
-                              <button 
-                                onClick={() => handleRun()}
-                                className="w-full bg-primary text-primary-foreground py-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:scale-[1.01] transition-transform shadow-lg shadow-primary/20"
-                              >
-                                 <Play size={20} fill="currentColor" /> RUN INSTALLER
-                              </button>
-                           </div>
-                        )}
-                     </div>
-                  </div>
-
-                  {/* Sidebar Info & Logs */}
-                  <div className="space-y-4 flex flex-col overflow-hidden pb-6">
-                     <div className="p-5 bg-secondary/20 rounded-2xl border border-border/50 space-y-4">
-                        <h4 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                          <Zap size={14} className="text-yellow-500" /> Environment
-                        </h4>
-                        <div className="space-y-3 text-xs">
-                           <div className="flex justify-between items-center">
-                              <span className="text-muted-foreground">ESync</span>
-                              <span className="bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded-full font-bold text-[9px]">ACTIVE</span>
-                           </div>
-                           <div className="flex justify-between items-center">
-                              <span className="text-muted-foreground">D3DMetal</span>
-                              <span className="bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded-full font-bold text-[9px]">ACTIVE</span>
-                           </div>
-                           <div className="flex justify-between items-center">
-                              <span className="text-muted-foreground">HUD</span>
-                              <span className="bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded-full font-bold text-[9px]">ACTIVE</span>
-                           </div>
-                        </div>
-                     </div>
-
-                     <div className="flex-1 bg-black/40 rounded-2xl border border-border/40 p-4 font-mono text-[10px] flex flex-col overflow-hidden shadow-inner">
-                        <div className="flex items-center justify-between mb-3 shrink-0">
-                          <div className="flex items-center gap-2 text-muted-foreground/60">
-                            <Terminal size={12} /> <span className="uppercase tracking-widest text-[9px] font-bold">Activity</span>
-                          </div>
-                          <button onClick={() => setLog([])} className="text-[9px] hover:text-white uppercase font-bold opacity-40 hover:opacity-100 transition-opacity">Clear</button>
-                        </div>
-                        <div className="flex-1 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
-                           {log.map((l, i) => <div key={i} className="text-emerald-400/80 leading-tight border-l border-emerald-400/20 pl-2 py-0.5">{l}</div>)}
-                        </div>
-                     </div>
-                  </div>
-               </div>
+        {/* Sidebar */}
+        <aside className="w-80 flex flex-col gap-6 shrink-0">
+          <div className="p-6 bg-slate-900 rounded-[2rem] border border-white/5 space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="text-[10px] font-black text-slate-500 tracking-widest">ENVIRONMENT</h3>
+              <button 
+                onClick={() => invoke("install_dx_runtime", { bottleId: selectedBottle.id })}
+                className="text-[9px] bg-blue-600/20 text-blue-400 px-2 py-1 rounded font-black hover:bg-blue-600/40 transition-all"
+              >
+                FIX GRAPHICS
+              </button>
             </div>
-          )}
-       </main>
+            <div className="space-y-2 text-[11px] font-bold">
+              <div className="flex justify-between"><span>ESYNC</span><span className="text-emerald-500">ACTIVE</span></div>
+              <div className="flex justify-between"><span>D3DMETAL</span><span className="text-emerald-500">ACTIVE</span></div>
+              <div className="flex justify-between"><span>LOGS</span><span className="text-slate-500">OFF</span></div>
+            </div>
+          </div>
+
+          <div className="flex-1 bg-black/40 rounded-[2rem] border border-white/5 p-6 flex flex-col overflow-hidden">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-[10px] font-black text-slate-600 tracking-widest uppercase">Activity</h3>
+              <button onClick={() => setLog([])} className="text-[9px] font-black opacity-30 hover:opacity-100">CLEAR</button>
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-2 font-mono text-[10px]">
+              {log.map((l, i) => <div key={i} className="text-emerald-500/70 border-l border-emerald-500/20 pl-2 leading-tight">{l}</div>)}
+            </div>
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }

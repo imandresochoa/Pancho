@@ -6,6 +6,8 @@ use serde::{Serialize, Deserialize};
 pub struct DetectedApp {
     pub name: String,
     pub exe_path: String, // Absolute path
+    #[serde(default)]
+    pub is_priority: bool,
 }
 
 pub fn scan_bottle_for_apps(bottle_path: &Path) -> Vec<DetectedApp> {
@@ -26,8 +28,6 @@ pub fn scan_bottle_for_apps(bottle_path: &Path) -> Vec<DetectedApp> {
     for path in search_paths {
         if !path.exists() { continue; }
 
-        // We use WalkDir to find .exe files, but we limit depth to avoid 
-        // listing every single helper utility in a game folder.
         for entry in WalkDir::new(path)
             .max_depth(3)
             .into_iter()
@@ -37,7 +37,6 @@ pub fn scan_bottle_for_apps(bottle_path: &Path) -> Vec<DetectedApp> {
             if p.is_file() && p.extension().map_or(false, |ext| ext == "exe") {
                 let file_name = p.file_stem().unwrap().to_string_lossy().to_string();
                 
-                // Filter out common uninstalls or helpers
                 let lower_name = file_name.to_lowercase();
                 if lower_name.contains("uninst") || lower_name.contains("helper") || lower_name.contains("crashhandler") {
                     continue;
@@ -46,6 +45,7 @@ pub fn scan_bottle_for_apps(bottle_path: &Path) -> Vec<DetectedApp> {
                 apps.push(DetectedApp {
                     name: file_name,
                     exe_path: p.to_string_lossy().to_string(),
+                    is_priority: lower_name == "steam",
                 });
             }
         }
@@ -57,6 +57,7 @@ pub fn scan_bottle_for_apps(bottle_path: &Path) -> Vec<DetectedApp> {
         apps.push(DetectedApp {
             name: "Steam".to_string(),
             exe_path: steam_path.to_string_lossy().to_string(),
+            is_priority: true,
         });
     }
 

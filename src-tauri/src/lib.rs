@@ -51,6 +51,37 @@ async fn open_bottle_dir(bottle_id: &str, handle: tauri::AppHandle) -> Result<()
     Ok(())
 }
 
+#[tauri::command]
+async fn install_dx_runtime(bottle_id: &str, handle: tauri::AppHandle) -> Result<(), String> {
+    let bottles = core::bottle::list_bottles(&handle)?;
+    let bottle = bottles.iter().find(|b| b.id == bottle_id)
+        .ok_or("Bottle not found")?;
+
+    // We run winetricks to install critical DirectX components
+    std::process::Command::new("winetricks")
+        .env("WINEPREFIX", bottle.path.to_str().unwrap())
+        .arg("-q")
+        .arg("d3dcompiler_47")
+        .arg("dxvk") // Add DXVK (DirectX over Vulkan) as a fallback
+        .spawn()
+        .map_err(|e| format!("Failed to run winetricks: {}", e))?;
+    
+    Ok(())
+}
+
+#[tauri::command]
+async fn pin_app(bottle_id: &str, app: core::scanner::DetectedApp, handle: tauri::AppHandle) -> Result<(), String> {
+    core::bottle::add_pinned_app(&handle, bottle_id, app)
+}
+
+#[tauri::command]
+async fn get_bottle_details(bottle_id: &str, handle: tauri::AppHandle) -> Result<core::bottle::Bottle, String> {
+    let bottles = core::bottle::list_bottles(&handle)?;
+    let bottle = bottles.into_iter().find(|b| b.id == bottle_id)
+        .ok_or("Bottle not found")?;
+    Ok(bottle)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -63,7 +94,10 @@ pub fn run() {
             get_bottles,
             create_bottle,
             scan_for_apps,
-            open_bottle_dir
+            open_bottle_dir,
+            install_dx_runtime,
+            pin_app,
+            get_bottle_details
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

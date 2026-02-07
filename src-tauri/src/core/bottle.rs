@@ -3,12 +3,16 @@ use std::path::PathBuf;
 use std::fs;
 use tauri::Manager;
 
+use crate::core::scanner::DetectedApp;
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Bottle {
     pub id: String,
     pub name: String,
     pub path: PathBuf,
     pub created_at: u64,
+    #[serde(default)]
+    pub pinned_apps: Vec<DetectedApp>,
 }
 
 pub fn get_bottles_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -41,6 +45,29 @@ pub fn list_bottles(app_handle: &tauri::AppHandle) -> Result<Vec<Bottle>, String
     Ok(bottles)
 }
 
+pub fn add_pinned_app(app_handle: &tauri::AppHandle, bottle_id: &str, app: DetectedApp) -> Result<(), String> {
+    let bottles_dir = get_bottles_dir(app_handle)?;
+    let bottle_path = bottles_dir.join(bottle_id);
+    let config_path = bottle_path.join("pancho.json");
+
+    if !config_path.exists() {
+        return Err("Bottle config not found".to_string());
+    }
+
+    let config_str = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+    let mut bottle: Bottle = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+
+    // Avoid duplicates
+    if !bottle.pinned_apps.iter().any(|a| a.exe_path == app.exe_path) {
+        bottle.pinned_apps.push(app);
+    }
+
+    let new_config_str = serde_json::to_string(&bottle).map_err(|e| e.to_string())?;
+    fs::write(config_path, new_config_str).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 pub fn create_bottle(app_handle: &tauri::AppHandle, name: &str) -> Result<Bottle, String> {
     let id = name.to_lowercase().replace(" ", "_");
     let bottles_dir = get_bottles_dir(app_handle)?;
@@ -60,6 +87,7 @@ pub fn create_bottle(app_handle: &tauri::AppHandle, name: &str) -> Result<Bottle
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs(),
+        pinned_apps: Vec::new(),
     };
 
     let config_path = bottle_path.join("pancho.json");
