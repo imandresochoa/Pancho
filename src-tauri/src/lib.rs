@@ -92,7 +92,6 @@ async fn install_dx_runtime(bottle_id: &str, handle: tauri::AppHandle) -> Result
             .env("WINEPREFIX", &prefix)
             .arg("-q")
             .arg("d3dcompiler_47")
-            .arg("dxvk")
             .output();
 
         match output {

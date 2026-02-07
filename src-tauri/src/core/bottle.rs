@@ -2,6 +2,7 @@ use serde::{Serialize, Deserialize};
 use std::path::PathBuf;
 use std::fs;
 use tauri::Manager;
+use rand::Rng;
 
 use crate::core::scanner::DetectedApp;
 
@@ -13,6 +14,8 @@ pub struct Bottle {
     pub created_at: u64,
     #[serde(default)]
     pub pinned_apps: Vec<DetectedApp>,
+    #[serde(default)]
+    pub cover: String,
 }
 
 pub fn get_bottles_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -34,7 +37,11 @@ pub fn list_bottles(app_handle: &tauri::AppHandle) -> Result<Vec<Bottle>, String
                 let config_path = path.join("pancho.json");
                 if config_path.exists() {
                     if let Ok(config_str) = fs::read_to_string(config_path) {
-                        if let Ok(bottle) = serde_json::from_str::<Bottle>(&config_str) {
+                        if let Ok(mut bottle) = serde_json::from_str::<Bottle>(&config_str) {
+                            // Ensure old bottles get a cover if missing
+                            if bottle.cover.is_empty() {
+                                bottle.cover = "/covers/cover01.png".to_string();
+                            }
                             bottles.push(bottle);
                         }
                     }
@@ -98,6 +105,10 @@ pub fn create_bottle(app_handle: &tauri::AppHandle, name: &str) -> Result<Bottle
 
     fs::create_dir_all(&bottle_path).map_err(|e| e.to_string())?;
 
+    let mut rng = rand::thread_rng();
+    let cover_num = rng.gen_range(1..=4);
+    let cover = format!("/covers/cover0{}.png", cover_num);
+
     let bottle = Bottle {
         id,
         name: name.to_string(),
@@ -107,6 +118,7 @@ pub fn create_bottle(app_handle: &tauri::AppHandle, name: &str) -> Result<Bottle
             .unwrap()
             .as_secs(),
         pinned_apps: Vec::new(),
+        cover,
     };
 
     let config_path = bottle_path.join("pancho.json");
