@@ -32,6 +32,11 @@ async fn create_bottle(name: &str, handle: tauri::AppHandle) -> Result<core::bot
 }
 
 #[tauri::command]
+async fn delete_bottle(id: &str, handle: tauri::AppHandle) -> Result<(), String> {
+    core::bottle::delete_bottle(&handle, id)
+}
+
+#[tauri::command]
 async fn scan_for_apps(bottle_id: &str, handle: tauri::AppHandle) -> Result<Vec<core::scanner::DetectedApp>, String> {
     let bottles = core::bottle::list_bottles(&handle)?;
     let bottle = bottles.iter().find(|b| b.id == bottle_id)
@@ -52,26 +57,13 @@ async fn open_bottle_dir(bottle_id: &str, handle: tauri::AppHandle) -> Result<()
 }
 
 #[tauri::command]
-async fn install_dx_runtime(bottle_id: &str, handle: tauri::AppHandle) -> Result<(), String> {
-    let bottles = core::bottle::list_bottles(&handle)?;
-    let bottle = bottles.iter().find(|b| b.id == bottle_id)
-        .ok_or("Bottle not found")?;
-
-    // We run winetricks to install critical DirectX components
-    std::process::Command::new("winetricks")
-        .env("WINEPREFIX", bottle.path.to_str().unwrap())
-        .arg("-q")
-        .arg("d3dcompiler_47")
-        .arg("dxvk") // Add DXVK (DirectX over Vulkan) as a fallback
-        .spawn()
-        .map_err(|e| format!("Failed to run winetricks: {}", e))?;
-    
-    Ok(())
+async fn pin_app(bottle_id: &str, app: core::scanner::DetectedApp, handle: tauri::AppHandle) -> Result<(), String> {
+    core::bottle::add_pinned_app(&handle, bottle_id, app)
 }
 
 #[tauri::command]
-async fn pin_app(bottle_id: &str, app: core::scanner::DetectedApp, handle: tauri::AppHandle) -> Result<(), String> {
-    core::bottle::add_pinned_app(&handle, bottle_id, app)
+async fn unpin_app(bottle_id: &str, exe_path: &str, handle: tauri::AppHandle) -> Result<(), String> {
+    core::bottle::remove_pinned_app(&handle, bottle_id, exe_path)
 }
 
 #[tauri::command]
@@ -93,10 +85,11 @@ pub fn run() {
             run_installer,
             get_bottles,
             create_bottle,
+            delete_bottle,
             scan_for_apps,
             open_bottle_dir,
-            install_dx_runtime,
             pin_app,
+            unpin_app,
             get_bottle_details
         ])
         .run(tauri::generate_context!())

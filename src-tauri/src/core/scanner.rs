@@ -18,40 +18,45 @@ pub fn scan_bottle_for_apps(bottle_path: &Path) -> Vec<DetectedApp> {
         return apps;
     }
 
-    // Common locations to look for games and apps
     let search_paths = [
         drive_c.join("Program Files"),
         drive_c.join("Program Files (x86)"),
         drive_c.join("users").join("Public").join("Desktop"),
     ];
 
+    let important_names = [
+        "steam", "epicgameslauncher", "gog galaxy", "battlenet", "origin", "ea desktop", "ubisoftconnect"
+    ];
+
     for path in search_paths {
         if !path.exists() { continue; }
 
         for entry in WalkDir::new(path)
-            .max_depth(3)
+            .max_depth(4)
             .into_iter()
             .filter_map(|e| e.ok()) 
         {
             let p = entry.path();
             if p.is_file() && p.extension().map_or(false, |ext| ext == "exe") {
                 let file_name = p.file_stem().unwrap().to_string_lossy().to_string();
-                
                 let lower_name = file_name.to_lowercase();
-                if lower_name.contains("uninst") || lower_name.contains("helper") || lower_name.contains("crashhandler") {
+                
+                if lower_name.contains("uninst") || lower_name.contains("helper") || lower_name.contains("crashhandler") || lower_name.contains("vcredist") {
                     continue;
                 }
+
+                let is_priority = lower_name == "steam";
 
                 apps.push(DetectedApp {
                     name: file_name,
                     exe_path: p.to_string_lossy().to_string(),
-                    is_priority: lower_name == "steam",
+                    is_priority,
                 });
             }
         }
     }
 
-    // Special check for Steam if not found
+    // Explicit Steam check
     let steam_path = drive_c.join("Program Files (x86)").join("Steam").join("steam.exe");
     if steam_path.exists() && !apps.iter().any(|a| a.name.to_lowercase() == "steam") {
         apps.push(DetectedApp {

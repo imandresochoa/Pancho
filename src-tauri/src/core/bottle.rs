@@ -57,10 +57,29 @@ pub fn add_pinned_app(app_handle: &tauri::AppHandle, bottle_id: &str, app: Detec
     let config_str = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
     let mut bottle: Bottle = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
 
-    // Avoid duplicates
     if !bottle.pinned_apps.iter().any(|a| a.exe_path == app.exe_path) {
         bottle.pinned_apps.push(app);
     }
+
+    let new_config_str = serde_json::to_string(&bottle).map_err(|e| e.to_string())?;
+    fs::write(config_path, new_config_str).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+pub fn remove_pinned_app(app_handle: &tauri::AppHandle, bottle_id: &str, exe_path: &str) -> Result<(), String> {
+    let bottles_dir = get_bottles_dir(app_handle)?;
+    let bottle_path = bottles_dir.join(bottle_id);
+    let config_path = bottle_path.join("pancho.json");
+
+    if !config_path.exists() {
+        return Err("Bottle config not found".to_string());
+    }
+
+    let config_str = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+    let mut bottle: Bottle = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+
+    bottle.pinned_apps.retain(|a| a.exe_path != exe_path);
 
     let new_config_str = serde_json::to_string(&bottle).map_err(|e| e.to_string())?;
     fs::write(config_path, new_config_str).map_err(|e| e.to_string())?;
@@ -95,4 +114,15 @@ pub fn create_bottle(app_handle: &tauri::AppHandle, name: &str) -> Result<Bottle
     fs::write(config_path, config_str).map_err(|e| e.to_string())?;
 
     Ok(bottle)
+}
+
+pub fn delete_bottle(app_handle: &tauri::AppHandle, id: &str) -> Result<(), String> {
+    let bottles_dir = get_bottles_dir(app_handle)?;
+    let bottle_path = bottles_dir.join(id);
+
+    if bottle_path.exists() {
+        fs::remove_dir_all(bottle_path).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }

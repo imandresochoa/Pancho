@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, ask } from "@tauri-apps/plugin-dialog";
 import * as Icons from "lucide-react";
 
 interface Bottle {
@@ -17,6 +17,11 @@ interface DetectedApp {
   is_priority: boolean;
 }
 
+const APP_ASSETS: Record<string, string> = {
+  "steam": "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/730/605a3897092ed38999171898f401cad9a519a733.jpg",
+  "default": "https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=2070&auto=format&fit=crop"
+};
+
 function App() {
   const [bottles, setBottles] = useState<Bottle[]>([]);
   const [selectedBottle, setSelectedBottle] = useState<Bottle | null>(null);
@@ -25,6 +30,7 @@ function App() {
   const [scanning, setScanning] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newBottleName, setNewBottleName] = useState("");
+  const [activeTab, setActiveTab] = useState<"library" | "browse">("library");
 
   useEffect(() => {
     loadBottles();
@@ -33,6 +39,8 @@ function App() {
   useEffect(() => {
     if (selectedBottle?.id) {
       handleScanApps();
+      refreshBottleDetails();
+      setActiveTab("library");
     }
   }, [selectedBottle?.id]);
 
@@ -43,6 +51,14 @@ function App() {
     } catch (e) {
       addToLog(`Error loading bottles: ${e}`);
     }
+  };
+
+  const refreshBottleDetails = async () => {
+    if (!selectedBottle) return;
+    try {
+      const details = await invoke<Bottle>("get_bottle_details", { bottleId: selectedBottle.id });
+      if (details) setSelectedBottle(details);
+    } catch (e) { console.error(e); }
   };
 
   const handleCreateBottle = async () => {
@@ -57,6 +73,16 @@ function App() {
     }
   };
 
+  const handleDeleteBottle = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    const confirmed = await ask("Delete this bottle and all its data?", { title: "Pancho", kind: "warning" });
+    if (!confirmed) return;
+    try {
+      await invoke("delete_bottle", { id });
+      loadBottles();
+    } catch (e) { addToLog(`Error: ${e}`); }
+  };
+
   const handleScanApps = async () => {
     if (!selectedBottle) return;
     setScanning(true);
@@ -68,6 +94,42 @@ function App() {
     } finally {
       setScanning(false);
     }
+  };
+
+  const handlePinApp = async (app: DetectedApp) => {
+    if (!selectedBottle) return;
+    try {
+      await invoke("pin_app", { bottleId: selectedBottle.id, app });
+      await refreshBottleDetails();
+      addToLog(`Pinned ${app.name}`);
+    } catch (e) { addToLog(`Pin error: ${e}`); }
+  };
+
+  const handleUnpinApp = async (exe_path: string) => {
+    if (!selectedBottle) return;
+    try {
+      await invoke("unpin_app", { bottleId: selectedBottle.id, exePath: exe_path });
+      await refreshBottleDetails();
+    } catch (e) { console.error(e); }
+  };
+
+  const handleAddManualShortcut = async () => {
+    if (!selectedBottle) return;
+    try {
+      const selected = await open({ multiple: false, filters: [{ name: 'EXE', extensions: ['exe'] }] });
+      if (selected && typeof selected === 'string') {
+        const name = selected.split('/').pop()?.replace('.exe', '') || "App";
+        await handlePinApp({ name, exe_path: selected, is_priority: false });
+      }
+    } catch (e) { console.error(e); }
+  };
+
+  const handleSelectAndRunInstaller = async () => {
+    if (!selectedBottle) return;
+    try {
+      const selected = await open({ multiple: false, filters: [{ name: 'EXE', extensions: ['exe'] }] });
+      if (selected && typeof selected === 'string') handleRun(selected);
+    } catch (e) { console.error(e); }
   };
 
   const handleRun = async (path: string) => {
@@ -84,33 +146,49 @@ function App() {
     setLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
   };
 
-  // --- SAFE RENDERING LOGIC ---
+  const getAsset = (name: string) => {
+    const n = name.toLowerCase();
+    if (n === "steam") return APP_ASSETS.steam;
+    return APP_ASSETS.default;
+  };
+
+  const pinnedList = selectedBottle?.pinned_apps || [];
+  const priorityApps = [
+      ...pinnedList,
+      ...installedApps.filter(a => a.is_priority && !pinnedList.some(p => p.exe_path === a.exe_path))
+  ];
+  const regularApps = installedApps.filter(a => !a.is_priority && !pinnedList.some(p => p.exe_path === a.exe_path));
+
   if (!selectedBottle) {
     return (
-      <div className="h-screen w-screen bg-slate-950 text-white p-8 overflow-y-auto">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-4xl font-black tracking-tighter">YOUR BOTTLES</h1>
-          <button onClick={() => setShowCreateModal(true)} className="bg-blue-600 px-6 py-2 rounded-xl font-bold hover:bg-blue-500 transition-all">NEW BOTTLE</button>
+      <div className="h-screen w-screen bg-slate-950 text-white p-8 overflow-y-auto font-sans">
+        <div className="flex justify-between items-center mb-12">
+          <div className="flex items-center gap-3">
+             <Icons.Gamepad2 className="text-blue-500 w-10 h-10" />
+             <h1 className="text-4xl font-black tracking-tighter uppercase">Pancho</h1>
+          </div>
+          <button onClick={() => setShowCreateModal(true)} className="bg-blue-600 px-6 py-2 rounded-xl font-bold hover:bg-blue-500 transition-all shadow-lg shadow-blue-600/20 text-xs uppercase tracking-widest">New Bottle</button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pb-10">
           {bottles.map(b => (
-            <div key={b.id} onClick={() => setSelectedBottle(b)} className="p-8 bg-slate-900 border border-white/5 rounded-3xl hover:border-blue-500/50 cursor-pointer transition-all group">
-              <Icons.Wine className="mb-4 text-slate-600 group-hover:text-blue-400 transition-colors" size={40} />
-              <h3 className="text-2xl font-bold">{b.name}</h3>
-              <p className="text-[10px] text-slate-500 mt-2 font-mono truncate">{b.path}</p>
+            <div key={b.id} onClick={() => setSelectedBottle(b)} className="p-8 bg-slate-900 border border-white/5 rounded-[2rem] hover:border-blue-500/50 cursor-pointer transition-all group relative overflow-hidden shadow-2xl">
+              <button onClick={(e) => handleDeleteBottle(e, b.id)} className="absolute top-6 right-6 p-2 text-slate-600 hover:text-red-500 bg-black/20 rounded-full opacity-0 group-hover:opacity-100 transition-all"><Icons.Trash2 size={18} /></button>
+              <Icons.Wine className="mb-6 text-slate-600 group-hover:text-blue-400 transition-colors" size={48} />
+              <h3 className="text-2xl font-black tracking-tight">{b.name.toUpperCase()}</h3>
+              <p className="text-[9px] text-slate-500 mt-2 font-mono truncate uppercase tracking-widest opacity-50">{b.id}</p>
             </div>
           ))}
         </div>
 
         {showCreateModal && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-6 z-50">
-            <div className="bg-slate-900 border border-white/10 p-10 rounded-[2.5rem] w-full max-w-md space-y-6 shadow-2xl">
-              <h2 className="text-2xl font-bold">New Bottle</h2>
-              <input autoFocus value={newBottleName} onChange={e => setNewBottleName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCreateBottle()} placeholder="Name..." className="w-full bg-slate-800 border-white/5 p-4 rounded-2xl focus:ring-2 ring-blue-500 outline-none" />
+            <div className="bg-slate-900 border border-white/10 p-10 rounded-[3rem] w-full max-w-md space-y-6 shadow-2xl">
+              <h2 className="text-2xl font-black uppercase tracking-tight">Create Bottle</h2>
+              <input autoFocus value={newBottleName} onChange={e => setNewBottleName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCreateBottle()} placeholder="e.g. Steam Games" className="w-full bg-slate-800 border-white/5 p-5 rounded-2xl outline-none focus:ring-2 ring-blue-500 font-bold" />
               <div className="flex gap-3">
-                <button onClick={() => setShowCreateModal(false)} className="flex-1 p-4 font-bold opacity-50">CANCEL</button>
-                <button onClick={handleCreateBottle} className="flex-1 bg-blue-600 p-4 rounded-2xl font-bold">CREATE</button>
+                <button onClick={() => setShowCreateModal(false)} className="flex-1 p-4 font-black text-xs opacity-50">CANCEL</button>
+                <button onClick={handleCreateBottle} className="flex-1 bg-blue-600 p-4 rounded-2xl font-black text-xs shadow-lg shadow-blue-600/20">CREATE</button>
               </div>
             </div>
           </div>
@@ -119,91 +197,141 @@ function App() {
     );
   }
 
-  // --- BOTTLE DETAIL VIEW ---
   return (
-    <div className="h-screen w-screen bg-slate-950 text-white flex flex-col overflow-hidden">
-      <header className="h-16 border-b border-white/5 flex items-center px-6 gap-4 shrink-0 bg-slate-900/50">
-        <button onClick={() => setSelectedBottle(null)} className="p-2 hover:bg-slate-800 rounded-full"><Icons.ArrowLeft size={24} /></button>
-        <h1 className="text-xl font-black uppercase tracking-tight">{selectedBottle.name}</h1>
+    <div className="h-screen w-screen bg-slate-950 text-white flex flex-col overflow-hidden font-sans">
+      <header className="h-16 border-b border-white/5 flex items-center px-6 gap-8 shrink-0 bg-slate-900/50 backdrop-blur-md">
+        <button onClick={() => setSelectedBottle(null)} className="p-2 hover:bg-slate-800 rounded-full transition-colors"><Icons.ArrowLeft size={24} /></button>
+        <h1 className="text-xl font-black uppercase tracking-tighter truncate max-w-[150px]">{selectedBottle.name}</h1>
+        
+        <nav className="flex gap-1 bg-slate-800/50 p-1 rounded-xl border border-white/5">
+           <button onClick={() => setActiveTab("library")} className={`px-5 py-1.5 rounded-lg text-[9px] font-black transition-all uppercase tracking-widest ${activeTab === 'library' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>Library</button>
+           <button onClick={() => setActiveTab("browse")} className={`px-5 py-1.5 rounded-lg text-[9px] font-black transition-all uppercase tracking-widest ${activeTab === 'browse' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>Browse</button>
+        </nav>
+
         <div className="ml-auto flex gap-2">
-          <button onClick={() => invoke("open_bottle_dir", { bottleId: selectedBottle.id })} className="bg-slate-800 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2"><Icons.FolderOpen size={14} /> FILES</button>
-          <button onClick={handleScanApps} className={`bg-slate-800 p-2 rounded-lg ${scanning ? 'animate-spin' : ''}`}><Icons.RefreshCw size={18} /></button>
+          <button onClick={() => invoke("open_bottle_dir", { bottleId: selectedBottle.id })} className="bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-[9px] font-black flex items-center gap-2 transition-colors uppercase tracking-widest"><Icons.FolderOpen size={14} /> Files</button>
+          <button onClick={handleScanApps} className={`bg-slate-800 hover:bg-slate-700 p-2 rounded-lg transition-colors ${scanning ? 'animate-spin' : ''}`}><Icons.RefreshCw size={18} /></button>
         </div>
       </header>
 
       <div className="flex-1 flex overflow-hidden p-6 gap-6">
-        <div className="flex-1 overflow-y-auto space-y-8 pr-2">
-          {/* Main App Grid */}
-          <section className="space-y-4">
-            <h2 className="text-[10px] font-black text-slate-500 tracking-widest uppercase">Detected Applications</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {installedApps.length > 0 ? installedApps.map((app, i) => (
-                <div key={i} className="bg-slate-900 border border-white/5 p-6 rounded-3xl flex items-center justify-between group hover:border-blue-500/30 transition-all">
-                  <div className="flex items-center gap-4 overflow-hidden">
-                    <div className="p-3 bg-slate-800 rounded-2xl text-blue-400 group-hover:bg-blue-600 group-hover:text-white transition-all"><Icons.Box size={24} /></div>
-                    <div className="overflow-hidden">
-                      <p className="font-bold text-lg truncate">{app.name}</p>
-                      <p className="text-[10px] text-slate-500 truncate font-mono">{app.exe_path.split('/').pop()}</p>
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
+          
+          {activeTab === "library" ? (
+            <div className="space-y-10 pb-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+               <section className="space-y-6">
+                  <div className="flex items-center justify-between">
+                     <h2 className="text-[10px] font-black text-blue-400 tracking-[0.4em] uppercase">Your Collection</h2>
+                     <button onClick={handleAddManualShortcut} className="text-[9px] font-black text-slate-500 hover:text-white flex items-center gap-1 uppercase tracking-widest transition-colors">+ Pin Custom .EXE</button>
+                  </div>
+                  
+                  {/* GAME CASE GRID: aspect-[2/3] */}
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-8">
+                    {priorityApps.map((app, i) => (
+                      <div key={i} className="group relative aspect-[2/3] rounded-[1.5rem] overflow-hidden border border-white/5 shadow-2xl hover:border-blue-500/50 hover:scale-[1.05] transition-all cursor-pointer bg-slate-900" onClick={() => handleRun(app.exe_path)}>
+                         {/* High-res Banner */}
+                         <img 
+                            src={getAsset(app.name)} 
+                            className="absolute inset-0 w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" 
+                            onError={(e) => { (e.target as HTMLImageElement).src = APP_ASSETS.default; }}
+                         />
+                         <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/10 to-transparent opacity-90" />
+                         
+                         {/* Content Overlay */}
+                         <div className="absolute inset-0 p-6 flex flex-col justify-end">
+                            <div className="space-y-1 transform group-hover:translate-y-[-10px] transition-transform duration-500">
+                               <p className="text-lg font-black tracking-tighter leading-tight break-words uppercase">{app.name}</p>
+                               <div className="flex items-center gap-2">
+                                  <span className="text-[8px] font-black bg-blue-600/90 px-1.5 py-0.5 rounded uppercase tracking-tighter">Verified</span>
+                               </div>
+                            </div>
+                            <div className="mt-4 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-500 delay-100">
+                               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Play Now</span>
+                               <Icons.PlayCircle className="text-white w-8 h-8" fill="currentColor" />
+                            </div>
+                         </div>
+
+                         {/* Unpin Button */}
+                         <button onClick={(e) => { e.stopPropagation(); handleUnpinApp(app.exe_path); }} className="absolute top-4 right-4 p-2 bg-black/40 backdrop-blur-md rounded-full text-white/30 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all shadow-lg"><Icons.StarOff size={14} /></button>
+                      </div>
+                    ))}
+
+                    {/* VERTICAL INSTALLER CARD */}
+                    <div 
+                      onClick={handleSelectAndRunInstaller}
+                      className="group relative aspect-[2/3] rounded-[1.5rem] overflow-hidden border-2 border-dashed border-white/10 hover:border-blue-500/40 hover:bg-blue-600/5 transition-all cursor-pointer flex flex-col items-center justify-center gap-4 group bg-slate-900/20"
+                    >
+                       <div className="p-6 bg-slate-900 rounded-[1.5rem] group-hover:scale-110 transition-transform shadow-2xl border border-white/5">
+                          <Icons.Plus className="text-blue-500" size={32} />
+                       </div>
+                       <div className="text-center space-y-1">
+                          <p className="font-black text-[10px] uppercase tracking-widest">Install New</p>
+                          <p className="text-[8px] font-bold text-slate-500 uppercase tracking-[0.2em]">Launch .EXE</p>
+                       </div>
                     </div>
                   </div>
-                  <button onClick={() => handleRun(app.exe_path)} className="p-4 bg-blue-600 rounded-2xl hover:scale-110 active:scale-95 transition-all shadow-lg shadow-blue-600/20"><Icons.Play size={20} fill="currentColor" /></button>
-                </div>
-              )) : (
-                <div className="col-span-full border-2 border-dashed border-white/5 py-20 rounded-3xl text-center text-slate-600">
-                  <p className="italic">No apps found yet. Use the button below to install something.</p>
-                </div>
-              )}
+               </section>
             </div>
-          </section>
-
-          {/* Installer Section */}
-          <section className="space-y-4">
-            <h2 className="text-[10px] font-black text-slate-500 tracking-widest uppercase">Setup</h2>
-            <button 
-              onClick={async () => {
-                const selected = await open({ multiple: false, filters: [{ name: 'EXE', extensions: ['exe'] }] });
-                if (selected && typeof selected === 'string') handleRun(selected);
-              }}
-              className="w-full border-2 border-dashed border-white/10 p-12 rounded-[2rem] hover:bg-blue-600/5 hover:border-blue-500/20 transition-all text-center flex flex-col items-center gap-3"
-            >
-              <Icons.Plus className="text-blue-500" size={32} />
-              <span className="font-bold opacity-60">RUN NEW INSTALLER (.EXE)</span>
-            </button> section
-          </section>
+          ) : (
+            <div className="space-y-6 pb-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+               <h2 className="text-[10px] font-black text-slate-500 tracking-[0.4em] uppercase border-b border-white/5 pb-4">Internal File Browser</h2>
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                 {regularApps.map((app, i) => (
+                   <div key={i} className="p-4 bg-slate-900/40 border border-white/5 rounded-2xl flex items-center justify-between group hover:border-white/10 transition-all">
+                     <div className="flex items-center gap-4 overflow-hidden">
+                       <div className="p-2 bg-slate-800 rounded-xl text-slate-400 group-hover:text-blue-400 transition-colors"><Icons.Box size={20} /></div>
+                       <div className="overflow-hidden">
+                         <p className="font-bold text-sm truncate">{app.name}</p>
+                         <p className="text-[9px] text-slate-600 truncate font-mono opacity-40">{app.exe_path.split('/').pop()}</p>
+                       </div>
+                     </div>
+                     <div className="flex items-center gap-1">
+                       <button onClick={() => handlePinApp(app)} className="p-2 text-slate-600 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-all" title="Pin to Library"><Icons.Star size={14} /></button>
+                       <button onClick={() => handleRun(app.exe_path)} className="p-2 text-blue-400 hover:bg-blue-400 hover:text-white rounded-lg transition-all"><Icons.Play size={16} fill="currentColor" /></button>
+                     </div>
+                   </div>
+                 ))}
+               </div>
+            </div>
+          )}
         </div>
 
         {/* Sidebar */}
-        <aside className="w-80 flex flex-col gap-6 shrink-0">
-          <div className="p-6 bg-slate-900 rounded-[2rem] border border-white/5 space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="text-[10px] font-black text-slate-500 tracking-widest">ENVIRONMENT</h3>
-              <button 
-                onClick={() => invoke("install_dx_runtime", { bottleId: selectedBottle.id })}
-                className="text-[9px] bg-blue-600/20 text-blue-400 px-2 py-1 rounded font-black hover:bg-blue-600/40 transition-all"
-              >
-                FIX GRAPHICS
-              </button>
-            </div>
-            <div className="space-y-2 text-[11px] font-bold">
-              <div className="flex justify-between"><span>ESYNC</span><span className="text-emerald-500">ACTIVE</span></div>
-              <div className="flex justify-between"><span>D3DMETAL</span><span className="text-emerald-500">ACTIVE</span></div>
-              <div className="flex justify-between"><span>LOGS</span><span className="text-slate-500">OFF</span></div>
+        <aside className="w-80 flex flex-col gap-6 shrink-0 pb-10">
+          <div className="p-6 bg-slate-900 rounded-[2.5rem] border border-white/5 space-y-6 shadow-2xl">
+            <h3 className="text-[10px] font-black text-slate-500 tracking-[0.3em] uppercase">Settings</h3>
+            <div className="space-y-3">
+               <EnvStat label="ENGINE" value="WINE-11.0" />
+               <EnvStat label="ARCH" value="X86_64" />
+               <EnvStat label="ESYNC" value="ON" active />
+               <EnvStat label="D3DMETAL" value="ON" active />
             </div>
           </div>
 
-          <div className="flex-1 bg-black/40 rounded-[2rem] border border-white/5 p-6 flex flex-col overflow-hidden">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-[10px] font-black text-slate-600 tracking-widest uppercase">Activity</h3>
-              <button onClick={() => setLog([])} className="text-[9px] font-black opacity-30 hover:opacity-100">CLEAR</button>
+          <div className="flex-1 bg-black/40 rounded-[2.5rem] border border-white/5 p-6 flex flex-col overflow-hidden shadow-inner">
+            <div className="flex justify-between items-center mb-4 shrink-0 text-slate-600">
+              <h3 className="text-[10px] font-black tracking-widest uppercase">System Log</h3>
+              <button onClick={() => setLog([])} className="text-[9px] font-black hover:text-white uppercase tracking-tighter transition-colors">Clear</button>
             </div>
-            <div className="flex-1 overflow-y-auto space-y-2 font-mono text-[10px]">
-              {log.map((l, i) => <div key={i} className="text-emerald-500/70 border-l border-emerald-500/20 pl-2 leading-tight">{l}</div>)}
+            <div className="flex-1 overflow-y-auto space-y-2 font-mono text-[9px] custom-scrollbar">
+              {log.map((l, i) => <div key={i} className="text-emerald-500/60 border-l border-emerald-500/20 pl-2 py-0.5 leading-tight">{l}</div>)}
             </div>
           </div>
         </aside>
       </div>
     </div>
   );
+}
+
+function EnvStat({ label, value, active = false }: { label: string, value: string, active?: boolean }) {
+    return (
+        <div className="flex justify-between items-center bg-black/20 p-4 rounded-2xl border border-white/5">
+            <span className="text-[9px] font-black tracking-widest opacity-40 uppercase">{label}</span>
+            <span className={`text-[9px] font-black px-2 py-0.5 rounded-md ${active ? 'bg-emerald-500/10 text-emerald-500' : 'text-slate-400'}`}>
+                {value}
+            </span>
+        </div>
+    )
 }
 
 export default App;
