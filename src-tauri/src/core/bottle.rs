@@ -16,6 +16,8 @@ pub struct Bottle {
     pub pinned_apps: Vec<DetectedApp>,
     #[serde(default)]
     pub cover: String,
+    #[serde(default)]
+    pub engine_path: Option<PathBuf>,
 }
 
 pub fn get_bottles_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -105,8 +107,8 @@ pub fn create_bottle(app_handle: &tauri::AppHandle, name: &str) -> Result<Bottle
 
     fs::create_dir_all(&bottle_path).map_err(|e| e.to_string())?;
 
-    let mut rng = rand::thread_rng();
-    let cover_num = rng.gen_range(1..=4);
+    let mut rng = rand::rng();
+    let cover_num = rng.random_range(1..=4);
     let cover = format!("/covers/cover0{}.png", cover_num);
 
     let bottle = Bottle {
@@ -119,6 +121,7 @@ pub fn create_bottle(app_handle: &tauri::AppHandle, name: &str) -> Result<Bottle
             .as_secs(),
         pinned_apps: Vec::new(),
         cover,
+        engine_path: None,
     };
 
     let config_path = bottle_path.join("pancho.json");
@@ -135,6 +138,46 @@ pub fn delete_bottle(app_handle: &tauri::AppHandle, id: &str) -> Result<(), Stri
     if bottle_path.exists() {
         fs::remove_dir_all(bottle_path).map_err(|e| e.to_string())?;
     }
+
+    Ok(())
+}
+
+pub fn rename_bottle(app_handle: &tauri::AppHandle, id: &str, new_name: &str) -> Result<(), String> {
+    let bottles_dir = get_bottles_dir(app_handle)?;
+    let bottle_path = bottles_dir.join(id);
+    let config_path = bottle_path.join("pancho.json");
+
+    if !config_path.exists() {
+        return Err("Bottle config not found".to_string());
+    }
+
+    let config_str = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+    let mut bottle: Bottle = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+
+    bottle.name = new_name.to_string();
+
+    let new_config_str = serde_json::to_string(&bottle).map_err(|e| e.to_string())?;
+    fs::write(config_path, new_config_str).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+pub fn set_bottle_engine(app_handle: &tauri::AppHandle, bottle_id: &str, engine_path: PathBuf) -> Result<(), String> {
+    let bottles_dir = get_bottles_dir(app_handle)?;
+    let bottle_path = bottles_dir.join(bottle_id);
+    let config_path = bottle_path.join("pancho.json");
+
+    if !config_path.exists() {
+        return Err("Bottle config not found".to_string());
+    }
+
+    let config_str = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+    let mut bottle: Bottle = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+
+    bottle.engine_path = Some(engine_path);
+
+    let new_config_str = serde_json::to_string(&bottle).map_err(|e| e.to_string())?;
+    fs::write(config_path, new_config_str).map_err(|e| e.to_string())?;
 
     Ok(())
 }

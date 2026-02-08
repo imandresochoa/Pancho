@@ -1,70 +1,64 @@
-use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
+use std::path::Path;
+use std::fs;
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DetectedApp {
     pub name: String,
-    pub exe_path: String, // Absolute path
-    #[serde(default)]
+    pub exe_path: String,
     pub is_priority: bool,
 }
 
 pub fn scan_bottle_for_apps(bottle_path: &Path) -> Vec<DetectedApp> {
     let mut apps = Vec::new();
     let drive_c = bottle_path.join("drive_c");
-    
+
     if !drive_c.exists() {
         return apps;
     }
 
-    let search_paths = [
-        drive_c.join("Program Files"),
-        drive_c.join("Program Files (x86)"),
-        drive_c.join("users").join("Public").join("Desktop"),
+    let priority_names = [
+        "steam.exe",
+        "epicgameslauncher.exe",
+        "galaxyclient.exe",
     ];
 
-    let important_names = [
-        "steam", "epicgameslauncher", "gog galaxy", "battlenet", "origin", "ea desktop", "ubisoftconnect"
-    ];
+    // Recursive scan for .exe files
+    scan_dir(&drive_c, &mut apps, &priority_names);
 
-    for path in search_paths {
-        if !path.exists() { continue; }
+    apps
+}
 
-        for entry in WalkDir::new(path)
-            .max_depth(4)
-            .into_iter()
-            .filter_map(|e| e.ok()) 
-        {
-            let p = entry.path();
-            if p.is_file() && p.extension().map_or(false, |ext| ext == "exe") {
-                let file_name = p.file_stem().unwrap().to_string_lossy().to_string();
-                let lower_name = file_name.to_lowercase();
-                
-                if lower_name.contains("uninst") || lower_name.contains("helper") || lower_name.contains("crashhandler") || lower_name.contains("vcredist") {
+fn scan_dir(dir: &Path, apps: &mut Vec<DetectedApp>, priority_names: &[&str]) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                // Avoid scanning very deep or irrelevant system dirs to stay fast
+                let dir_name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+                if dir_name == "windows" || dir_name == "users" {
                     continue;
                 }
+                scan_dir(&path, apps, priority_names);
+            } else if let Some(ext) = path.extension() {
+                if ext.to_string_lossy().to_lowercase() == "exe" {
+                    let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+                    
+                    // Basic heuristic: Ignore uninstallers and common helpers
+                    if file_name.contains("unins") || file_name.contains("helper") || file_name.contains("crashpad") {
+                        continue;
+                    }
 
-                let is_priority = lower_name == "steam";
+                    let is_priority = priority_names.contains(&file_name.as_str());
+                    let name = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
 
-                apps.push(DetectedApp {
-                    name: file_name,
-                    exe_path: p.to_string_lossy().to_string(),
-                    is_priority,
-                });
+                    apps.push(DetectedApp {
+                        name,
+                        exe_path: path.to_str().unwrap_or_default().to_string(),
+                        is_priority,
+                    });
+                }
             }
         }
     }
-
-    // Explicit Steam check
-    let steam_path = drive_c.join("Program Files (x86)").join("Steam").join("steam.exe");
-    if steam_path.exists() && !apps.iter().any(|a| a.name.to_lowercase() == "steam") {
-        apps.push(DetectedApp {
-            name: "Steam".to_string(),
-            exe_path: steam_path.to_string_lossy().to_string(),
-            is_priority: true,
-        });
-    }
-
-    apps
 }

@@ -18,7 +18,13 @@ async fn run_installer(path: &str, bottle_id: &str, handle: tauri::AppHandle) ->
     let bottle = bottles.iter().find(|b| b.id == bottle_id)
         .ok_or("Bottle not found")?;
     
-    core::runner::run_executable(path, &bottle.path)
+    let custom_engine = bottle.engine_path.as_ref().map(|p| p.to_str().unwrap().to_string());
+    core::runner::run_executable(path, &bottle.path, custom_engine)
+}
+
+#[tauri::command]
+async fn set_bottle_engine(bottle_id: &str, engine_path: &str, handle: tauri::AppHandle) -> Result<(), String> {
+    core::bottle::set_bottle_engine(&handle, bottle_id, std::path::PathBuf::from(engine_path))
 }
 
 #[tauri::command]
@@ -34,6 +40,11 @@ async fn create_bottle(name: &str, handle: tauri::AppHandle) -> Result<core::bot
 #[tauri::command]
 async fn delete_bottle(id: &str, handle: tauri::AppHandle) -> Result<(), String> {
     core::bottle::delete_bottle(&handle, id)
+}
+
+#[tauri::command]
+async fn rename_bottle(id: &str, new_name: &str, handle: tauri::AppHandle) -> Result<(), String> {
+    core::bottle::rename_bottle(&handle, id, new_name)
 }
 
 #[tauri::command]
@@ -86,27 +97,40 @@ async fn install_dx_runtime(bottle_id: &str, handle: tauri::AppHandle) -> Result
     let handle_clone = handle.clone();
 
     std::thread::spawn(move || {
-        let _ = handle_clone.emit("status-update", "Starting DirectX Repair...".to_string());
+        let _ = handle_clone.emit("status-update", "Killing active processes...".to_string());
         
-        let output = std::process::Command::new("winetricks")
+        // Kill any existing wine processes to unlock the prefix
+        let _ = std::process::Command::new("wineserver")
+            .arg("-k")
             .env("WINEPREFIX", &prefix)
-            .arg("-q")
-            .arg("d3dcompiler_47")
             .output();
 
-        match output {
-            Ok(out) => {
-                let msg = if out.status.success() {
-                    "DirectX components successfully installed.".to_string()
-                } else {
-                    format!("Error: {}", String::from_utf8_lossy(&out.stderr))
-                };
-                let _ = handle_clone.emit("status-update", msg);
-            },
-            Err(e) => {
-                let _ = handle_clone.emit("status-update", format!("Failed to launch winetricks: {}", e));
+        let _ = handle_clone.emit("status-update", "Purging incompatible drivers...".to_string());
+        
+        let drive_c = std::path::Path::new(&prefix).join("drive_c").join("windows").join("system32");
+        let _ = std::fs::remove_file(drive_c.join("d3d11.dll"));
+        let _ = std::fs::remove_file(drive_c.join("dxgi.dll"));
+
+        // Sequence of installations
+        let components = ["d3dcompiler_47", "vcredist2022"];
+        
+        for comp in components {
+            let _ = handle_clone.emit("status-update", format!("Installing {}...", comp));
+            let output = std::process::Command::new("winetricks")
+                .env("WINEPREFIX", &prefix)
+                .arg("-q")
+                .arg(comp)
+                .output();
+
+            if let Ok(out) = output {
+                if !out.status.success() {
+                    let err = String::from_utf8_lossy(&out.stderr);
+                    let _ = handle_clone.emit("status-update", format!("Warning on {}: {}", comp, err));
+                }
             }
         }
+
+        let _ = handle_clone.emit("status-update", "Graphics repair complete. Restart Pancho.".to_string());
     });
     
     Ok(())
@@ -124,10 +148,14 @@ pub fn run() {
             get_bottles,
             create_bottle,
             delete_bottle,
+            rename_bottle,
+            set_bottle_engine,
             scan_for_apps,
             open_bottle_dir,
             install_dx_runtime,
-            get_bottle_details
+            get_bottle_details,
+            pin_app,
+            unpin_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

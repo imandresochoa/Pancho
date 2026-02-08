@@ -11,6 +11,7 @@ interface Bottle {
   created_at: number;
   pinned_apps?: DetectedApp[];
   cover: string;
+  engine_path?: string;
 }
 
 interface DetectedApp {
@@ -20,11 +21,10 @@ interface DetectedApp {
 }
 
 const APP_ASSETS: Record<string, string> = {
-  "steam": "/covers/cover01.png",
+  "steam": "/covers/steam-cover.jpeg",
   "default": "/covers/cover02.png"
 };
 
-// Reusable glassy depth style
 const glassyStyle = {
   background: "linear-gradient(135deg, #222222 0%, #000000 100%)",
   boxShadow: "inset 0 1px 0 0 rgba(255,255,255,0.05), 0 20px 40px rgba(0,0,0,0.4)",
@@ -41,6 +41,9 @@ function App() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newBottleName, setNewBottleName] = useState("");
   const [activeTab, setActiveTab] = useState<"library" | "browse">("library");
+  
+  const [renameTarget, setRenameTarget] = useState<Bottle | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   useEffect(() => {
     loadBottles();
@@ -99,6 +102,28 @@ function App() {
     } catch (e) { addToLog(`Error: ${e}`); }
   };
 
+  const handleRenameBottle = async () => {
+    if (!renameTarget || !renameValue.trim()) return;
+    try {
+      await invoke("rename_bottle", { id: renameTarget.id, newName: renameValue });
+      setRenameTarget(null);
+      setRenameValue("");
+      loadBottles();
+    } catch (e) { addToLog(`Error: ${e}`); }
+  };
+
+  const handleSetEngine = async () => {
+    if (!selectedBottle) return;
+    try {
+      const selected = await open({ multiple: false, title: "Select Wine/Engine Binary" });
+      if (selected && typeof selected === 'string') {
+        await invoke("set_bottle_engine", { bottleId: selectedBottle.id, enginePath: selected });
+        addToLog(`Engine set to: ${selected}`);
+        refreshBottleDetails();
+      }
+    } catch (e) { addToLog(`Error: ${e}`); }
+  };
+
   const handleScanApps = async () => {
     if (!selectedBottle) return;
     setScanning(true);
@@ -136,23 +161,14 @@ function App() {
     } catch (e) { console.error(e); }
   };
 
-  const handleAddManualShortcut = async () => {
-    if (!selectedBottle) return;
-    try {
-      const selected = await open({ multiple: false, filters: [{ name: 'EXE', extensions: ['exe'] }] });
-      if (selected && typeof selected === 'string') {
-        const name = selected.split('/').pop()?.replace('.exe', '') || "App";
-        await handlePinApp({ name, exe_path: selected, is_priority: false });
-      }
-    } catch (e) { console.error(e); }
-  };
-
   const handleRun = async (path: string) => {
     if (!selectedBottle) return;
     try {
       addToLog(`Launching ${path.split('/').pop()}...`);
       await invoke("run_installer", { path, bottleId: selectedBottle.id });
-    } catch (err) { addToLog(`Error: ${err}`); }
+    } catch (err) {
+      addToLog(`Error: ${err}`);
+    }
   };
 
   const addToLog = (msg: string) => {
@@ -175,7 +191,7 @@ function App() {
   if (!selectedBottle) {
     return (
       <div className="h-screen w-screen bg-black text-white p-12 overflow-y-auto font-sans">
-        <div className="flex justify-between items-center mb-16 border-b border-white/5 pb-8">
+        <div className="flex justify-between items-center mb-16 border-b border-white/10 pb-8">
           <div className="flex items-center gap-4">
              <img src="/logo_pancho.svg" alt="Logo" className="h-16 w-auto" />
           </div>
@@ -187,8 +203,6 @@ function App() {
             <div key={b.id} onClick={() => setSelectedBottle(b)} style={glassyStyle} className="group relative aspect-[2/3] overflow-hidden transition-all duration-500 ease-out cursor-pointer hover:border-white hover:scale-[1.05] will-change-transform">
               <img src={b.cover || APP_ASSETS.default} className="absolute inset-0 w-full h-full object-cover transition-transform duration-1000 ease-out group-hover:scale-110" />
               <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent opacity-90 group-hover:opacity-100 transition-opacity" />
-              
-              {/* Top Highlight Reflection */}
               <div className="absolute top-0 left-0 right-0 h-1/2 bg-gradient-to-b from-white/5 to-transparent opacity-50" />
 
               <div className="absolute inset-0 p-8 flex flex-col justify-end">
@@ -202,11 +216,15 @@ function App() {
                 </div>
               </div>
               
-              <button onClick={(e) => { e.stopPropagation(); handleDeleteBottle(e, b.id); }} className="absolute top-6 right-6 p-2 text-zinc-600 hover:text-red-500 bg-black/40 opacity-0 group-hover:opacity-100 transition-all"><Icons.Trash2 size={18} /></button>
+              <div className="absolute top-6 right-6 flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                <button onClick={(e) => { e.stopPropagation(); setRenameTarget(b); setRenameValue(b.name); }} className="p-2 text-zinc-400 hover:text-white bg-black/40"><Icons.Edit2 size={16} /></button>
+                <button onClick={(e) => { e.stopPropagation(); handleDeleteBottle(e, b.id); }} className="p-2 text-zinc-600 hover:text-red-500 bg-black/40"><Icons.Trash2 size={18} /></button>
+              </div>
             </div>
           ))}
         </div>
 
+        {/* Modals */}
         {showCreateModal && (
           <div className="fixed inset-0 bg-black/95 backdrop-blur-sm flex items-center justify-center p-6 z-50">
             <div className="bg-zinc-900 border border-white/10 p-12 w-full max-w-md space-y-8 shadow-2xl">
@@ -214,7 +232,20 @@ function App() {
               <input autoFocus value={newBottleName} onChange={e => setNewBottleName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCreateBottle()} placeholder="NAME..." className="w-full bg-black border border-white/10 p-5 outline-none focus:border-white font-bold tracking-widest" />
               <div className="flex gap-px bg-white/10 border border-white/10">
                 <button onClick={() => setShowCreateModal(false)} className="flex-1 p-4 font-black text-xs opacity-50 uppercase tracking-widest hover:opacity-100">Cancel</button>
-                <button onClick={handleCreateBottle} className="flex-1 bg-white text-black p-4 font-black text-xs uppercase tracking-widest hover:bg-zinc-200 shadow-lg">Create</button>
+                <button onClick={handleCreateBottle} className="flex-1 bg-white text-black p-4 font-black text-xs uppercase tracking-widest hover:bg-zinc-200">Create</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {renameTarget && (
+          <div className="fixed inset-0 bg-black/95 backdrop-blur-sm flex items-center justify-center p-6 z-50">
+            <div className="bg-zinc-900 border border-white/10 p-12 w-full max-w-md space-y-8 shadow-2xl">
+              <h2 className="text-3xl font-black uppercase tracking-tight">Rename Bottle</h2>
+              <input autoFocus value={renameValue} onChange={e => setRenameValue(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleRenameBottle()} className="w-full bg-black border border-white/10 p-5 outline-none focus:border-white font-bold tracking-widest" />
+              <div className="flex gap-px bg-white/10 border border-white/10">
+                <button onClick={() => setRenameTarget(null)} className="flex-1 p-4 font-black text-xs opacity-50 uppercase tracking-widest hover:opacity-100">Cancel</button>
+                <button onClick={handleRenameBottle} className="flex-1 bg-white text-black p-4 font-black text-xs uppercase tracking-widest hover:bg-zinc-200">Save</button>
               </div>
             </div>
           </div>
@@ -254,17 +285,14 @@ function App() {
                                 handlePinApp({ name, exe_path: selected, is_priority: false });
                             }
                         });
-                     }} className="text-[9px] font-black text-zinc-500 hover:text-white flex items-center gap-1 uppercase tracking-widest transition-colors">+ Pin Custom .EXE</button>
+                     }} className="text-[9px] font-black text-slate-500 hover:text-white flex items-center gap-1 uppercase tracking-widest transition-colors">+ Pin Custom .EXE</button>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-8">
                     {priorityApps.map((app, i) => (
-                      <div key={i} style={glassyStyle} className="group relative aspect-[2/3] overflow-hidden transition-all duration-500 ease-out cursor-pointer hover:border-white hover:scale-[1.05] bg-zinc-900 will-change-transform" onClick={() => handleRun(app.exe_path)}>
+                      <div key={i} style={glassyStyle} className="group relative aspect-[2/3] overflow-hidden transition-all duration-500 ease-out cursor-pointer hover:border-white hover:scale-[1.05] will-change-transform" onClick={() => handleRun(app.exe_path)}>
                          <img src={getAsset(app.name)} className="absolute inset-0 w-full h-full object-cover transition-transform duration-1000 ease-out group-hover:scale-110" onError={(e) => { (e.target as HTMLImageElement).src = APP_ASSETS.default; }} />
-                         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent opacity-90 transition-opacity group-hover:opacity-100" />
-                         
-                         {/* Top Highlight Reflection */}
+                         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/10 to-transparent opacity-90 group-hover:opacity-100 transition-opacity" />
                          <div className="absolute top-0 left-0 right-0 h-1/2 bg-gradient-to-b from-white/5 to-transparent opacity-50" />
-
                          <div className="absolute inset-0 p-6 flex flex-col justify-end">
                             <div className="space-y-1 transition-transform duration-500 ease-out group-hover:translate-y-[-8px]">
                                <p className="text-xl font-black tracking-tighter leading-tight break-words uppercase">{app.name}</p>
@@ -273,7 +301,7 @@ function App() {
                                </div>
                             </div>
                             <div className="mt-4 flex items-center justify-between opacity-0 translate-y-2 transition-all duration-500 ease-out group-hover:opacity-100 group-hover:translate-y-0">
-                               <span className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em]">Launch Now</span>
+                               <span className="text-[9px] font-black text-zinc-400 uppercase tracking-[0.2em]">Launch Now</span>
                                <div className="bg-white text-black p-2"><Icons.PlayCircle className="w-6 h-6" fill="currentColor" /></div>
                             </div>
                          </div>
@@ -285,12 +313,8 @@ function App() {
                             if (selected && typeof selected === 'string') handleRun(selected);
                         });
                     }} style={glassyStyle} className="group relative aspect-[2/3] hover:border-white hover:bg-white/5 transition-all duration-500 ease-out cursor-pointer flex flex-col items-center justify-center gap-6 bg-zinc-900/40">
-                       {/* Top Highlight Reflection */}
                        <div className="absolute top-0 left-0 right-0 h-1/2 bg-gradient-to-b from-white/5 to-transparent opacity-50" />
-                       
-                       <div className="p-6 border border-white/10 group-hover:border-white transition-colors bg-black shadow-xl">
-                          <Icons.Plus className="text-zinc-500 group-hover:text-white" size={32} />
-                       </div>
+                       <div className="p-6 border border-white/10 group-hover:border-white transition-colors bg-black shadow-xl"><Icons.Plus className="text-zinc-500 group-hover:text-white" size={32} /></div>
                        <p className="font-black text-[10px] uppercase tracking-widest text-zinc-500 group-hover:text-white">Install New</p>
                     </div>
                   </div>
@@ -303,10 +327,10 @@ function App() {
                  {regularApps.map((app, i) => (
                    <div key={i} className="p-6 bg-black border border-white/5 flex items-center justify-between group hover:bg-zinc-900 transition-all">
                      <div className="flex items-center gap-6 overflow-hidden">
-                       <div className="p-3 bg-zinc-900 text-zinc-500 group-hover:text-white transition-colors"><Icons.Box size={24} /></div>
+                       <div className="p-2 bg-zinc-900 text-zinc-500 group-hover:text-white transition-colors"><Icons.Box size={20} /></div>
                        <div className="overflow-hidden">
-                         <p className="font-bold text-base truncate">{app.name}</p>
-                         <p className="text-[10px] text-zinc-600 truncate font-mono opacity-40">{app.exe_path.split('/').pop()}</p>
+                         <p className="font-bold text-sm truncate">{app.name}</p>
+                         <p className="text-[9px] text-zinc-600 truncate font-mono opacity-40">{app.exe_path.split('/').pop()}</p>
                        </div>
                      </div>
                      <div className="flex items-center gap-px bg-white/10">
@@ -330,8 +354,24 @@ function App() {
                </button>
             </div>
             <div className="space-y-px bg-white/5 border border-white/10">
-               <EnvStat label="ENGINE" value="WINE-11.0" />
-               <EnvStat label="ARCH" value="X86_64" />
+               <EnvStat label="ENGINE" value={selectedBottle.engine_path ? "CUSTOM" : "STABLE"} />
+               
+               {/* PROMINENT ENGINE SELECTOR */}
+               <button onClick={handleSetEngine} className="w-full text-left p-6 bg-black hover:bg-white/5 transition-all group border-b border-white/10">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-[10px] font-black tracking-[0.2em] text-zinc-500 group-hover:text-white uppercase">Change Engine</span>
+                    <Icons.Cpu className="w-4 h-4 text-zinc-600 group-hover:text-blue-400 transition-colors" />
+                  </div>
+                  <div className="bg-zinc-900/50 p-3 border border-white/5 group-hover:border-blue-500/30 transition-colors">
+                    <p className="text-[9px] text-zinc-400 truncate font-mono uppercase tracking-widest leading-none">
+                      {selectedBottle.engine_path ? selectedBottle.engine_path.split('/').pop() : "DEFAULT WINE"}
+                    </p>
+                  </div>
+                  <p className="text-[8px] text-zinc-600 mt-3 font-medium uppercase tracking-tighter leading-relaxed">
+                    Point to a specific Wine or GPTK binary to upgrade performance.
+                  </p>
+               </button>
+
                <EnvStat label="ESYNC" value="ON" active />
                <EnvStat label="MSYNC" value="ON" active />
             </div>
@@ -354,7 +394,7 @@ function App() {
 function EnvStat({ label, value, active = false }: { label: string, value: string, active?: boolean }) {
     return (
         <div className="flex justify-between items-center p-4 bg-black">
-            <span className="text-[10px] font-black tracking-[0.2em] opacity-30 uppercase">{label}</span>
+            <span className="text-[10px] font-black tracking-widest opacity-30 uppercase">{label}</span>
             <span className={`text-[10px] font-black tracking-widest ${active ? 'text-emerald-500' : 'text-zinc-500'}`}>{value}</span>
         </div>
     )
