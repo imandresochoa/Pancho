@@ -218,13 +218,21 @@ function App() {
     if (!selectedBottle) return;
     try {
       const fileName = path.split('/').pop()?.toLowerCase() || "";
-      if (fileName.includes("steam")) {
+      if (fileName.includes("steam.exe")) {
           setNotification({ 
-            message: "Initializing Steam... Pancho-Core is registering system-level shims for Apple Silicon.", 
+            message: "Initializing Steam with D3DMetal optimizations...", 
             type: "warning" 
           });
-          setTimeout(() => setNotification(null), 10000);
+          
+          await invoke("launch_steam", { 
+              bottleId: selectedBottle.id,
+              mode: "Normal"
+          });
+          
+          setTimeout(() => setNotification(null), 5000);
+          return;
       }
+
       addToLog(`Launching ${path.split('/').pop()}...`);
       await invoke("run_installer", { path, bottleId: selectedBottle.id });
     } catch (err) { addToLog(`Error: ${err}`); }

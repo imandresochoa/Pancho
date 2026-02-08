@@ -59,20 +59,30 @@ pub async fn get_wine_runners() -> Result<Vec<WineRunner>, String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     let home_path = Path::new(&home);
 
-    let mut scan_paths = vec![
-        PathBuf::from("/usr/local/bin/wine64"),
-        PathBuf::from("/opt/homebrew/bin/wine64"),
-        PathBuf::from("/usr/local/opt/game-porting-toolkit/bin/wine64"),
+    let mut scan_paths = Vec::new();
+    let bin_names = ["wine64", "wine"];
+    let base_paths = [
+        "/usr/local/bin",
+        "/opt/homebrew/bin",
+        "/usr/local/opt/game-porting-toolkit/bin",
     ];
+
+    for bp in base_paths {
+        for name in bin_names {
+            scan_paths.push(PathBuf::from(format!("{}/{}", bp, name)));
+        }
+    }
 
     // Whisky Engines
     let whisky_engines_dir = home_path.join("Library/Application Support/com.isaacmarovitz.Whisky/Engines");
     if whisky_engines_dir.exists() {
         if let Ok(entries) = std::fs::read_dir(whisky_engines_dir) {
             for entry in entries.flatten() {
-                let wine_path = entry.path().join("bin/wine64");
-                if wine_path.exists() {
-                    scan_paths.push(wine_path);
+                for name in ["bin/wine64", "bin/wine"] {
+                    let wine_path = entry.path().join(name);
+                    if wine_path.exists() {
+                        scan_paths.push(wine_path);
+                    }
                 }
             }
         }

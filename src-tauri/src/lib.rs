@@ -247,19 +247,29 @@ async fn initialize_pro_bottle(bottle_id: &str, handle: tauri::AppHandle) -> Res
 
     let engine_path = if let Some(pro_path) = core::engine::get_pro_engine_path(&handle) {
         pro_path.to_str().unwrap().to_string()
+    } else if let Some(custom) = &bottle.engine_path {
+        custom.to_str().unwrap().to_string()
     } else {
         "wine".to_string()
     };
 
-    std::thread::spawn(move || {
+    // Use spawn_blocking to run synchronous process operations off the async runtime thread
+    tokio::task::spawn_blocking(move || {
         let _ = handle_clone.emit("bottle-init-status", "Sowing the seeds of the world...");
         
         // 1. Initialize the prefix (wineboot)
-        let _ = std::process::Command::new(&engine_path)
+        // Note: wineboot usually returns quickly but the wineserver keeps running.
+        // We use -u (update) which is standard for init.
+        let output = std::process::Command::new(&engine_path)
             .env("WINEPREFIX", &prefix)
             .arg("wineboot")
             .arg("-u")
             .output();
+
+        if let Err(e) = output {
+             let _ = handle_clone.emit("bottle-init-status", format!("Error booting wine: {}", e));
+             return;
+        }
 
         if env_type == "pro" {
             let _ = handle_clone.emit("bottle-init-status", "Raising the mountains...");
@@ -272,8 +282,11 @@ async fn initialize_pro_bottle(bottle_id: &str, handle: tauri::AppHandle) -> Res
             let _ = core::patcher::apply_steam_specific_patches(&engine_path, std::path::Path::new(&prefix));
         }
 
+        // Wait a moment for wineserver to settle
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
         let _ = handle_clone.emit("bottle-init-status", "World construction complete.");
-    });
+    }).await.map_err(|e| e.to_string())?;
 
     Ok(())
 }
