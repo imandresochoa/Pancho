@@ -3,6 +3,8 @@ mod core;
 mod wine;
 mod bottle;
 mod gptk;
+mod process;
+mod recovery;
 mod integration_tests;
 
 #[tauri::command]
@@ -324,7 +326,14 @@ pub fn run() {
             gptk::dll_override::set_graphics_backend,
             wine::steam::install_steam,
             wine::steam::launch_steam,
-            wine::steam::check_steam_status
+            wine::steam::check_steam_status,
+            process::manager::get_active_processes,
+            process::manager::kill_all_bottle_processes,
+            process::manager::is_bottle_running,
+            wine::log_parser::get_recent_logs,
+            wine::log_parser::analyze_log_line,
+            wine::log_parser::get_fix_suggestion,
+            recovery::auto_fix::attempt_auto_fix
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

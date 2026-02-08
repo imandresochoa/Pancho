@@ -9,7 +9,7 @@ pub struct RegistryManager;
 impl RegistryManager {
     pub fn generate_reg_file(entries: &[RegistryEntry]) -> String {
         let mut content = String::from("Windows Registry Editor Version 5.00\n\n");
-        let mut current_key = String::new();
+        let _current_key = String::new();
 
         // Group by key to avoid repeating [Header]
         let mut grouped: HashMap<String, Vec<&RegistryEntry>> = HashMap::new();

@@ -74,7 +74,7 @@ impl DllOverrideManager {
         RegistryManager::write_entries(bottle_path, wine_path, &entries).await
     }
 
-    pub async fn get_current_backend(bottle_path: &Path, wine_path: &Path) -> Result<GraphicsBackend, String> {
+    pub async fn get_current_backend(_bottle_path: &Path, _wine_path: &Path) -> Result<GraphicsBackend, String> {
         // This is a bit tricky without querying the registry.
         // For now, we'll assume WineD3D unless we verify otherwise later (e.g. by checking reg files).
         // A robust implementation would parse the registry file.

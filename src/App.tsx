@@ -3,7 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { open, ask } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import * as Icons from "lucide-react";
-import { RunnerSelector, WineRunner } from "@/components/RunnerSelector";
+import { BottleWizard } from "@/components/BottleWizard";
+import { GraphicsConfig } from "@/components/GraphicsConfig";
 
 interface Bottle {
   id: string;
@@ -44,43 +45,6 @@ const glassyStyle = {
   border: "1px solid #333333"
 };
 
-const FLAVOR_TEXTS = [
-  "LEEEEEROY JENKINS!!!",
-  "It's dangerous to go alone! Take this.",
-  "I'll be back...",
-  "Say hello to my little friend!",
-  "To infinity and beyond!",
-  "Stay frosty, Pancho.",
-  "May the Force be with you.",
-  "Finish him!",
-  "Hey you, you're finally awake.",
-  "All your base are belong to us.",
-  "Do a barrel roll!",
-  "Here's looking at you, kid.",
-  "I'm gonna make him an offer he can't refuse.",
-  "Go ahead, make my day.",
-  "Bond. James Bond.",
-  "Why so serious?",
-  "I am your father.",
-  "Wait for it... legendary!",
-  "Houston, we have a problem.",
-  "Elementary, my dear Watson.",
-  "You're a wizard, Pancho.",
-  "Winter is coming.",
-  "Just keep swimming.",
-  "I am Iron Man.",
-  "Wasted...",
-  "Snake? Snake?! SNAAAAAAAKE!!!",
-  "Praise the Sun!",
-  "The cake is a lie.",
-  "A wild Pancho appeared!",
-  "Checking for imposters...",
-  "Sus as hell...",
-  "Fus Ro Dah!",
-  "War. War never changes.",
-  "Mire vuestra merced que aquellos no son gigantes..."
-];
-
 function App() {
   const [bottles, setBottles] = useState<Bottle[]>([]);
   const [selectedBottle, setSelectedBottle] = useState<Bottle | null>(null);
@@ -94,17 +58,8 @@ function App() {
   const [log, setLog] = useState<string[]>([]);
   const [scanning, setScanning] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newBottleName, setNewBottleName] = useState("");
-  const [createStep, setCreateStep] = useState(1);
-  const [selectedEnv, setSelectedEnv] = useState<"classic" | "pro">("pro");
-  const [selectedRunner, setSelectedRunner] = useState<WineRunner | null>(null);
   const [activeTab, setActiveTab] = useState<"library" | "browse" | "analysis">("library");
   
-  // Initialization State
-  const [isInitializing, setIsInitializing] = useState(false);
-  const [initStatus, setInitStatus] = useState("");
-  const [flavorIndex, setFlavorIndex] = useState(0);
-
   // Analysis State
   const [analysisInfo, setAnalysisInfo] = useState<any>(null);
 
@@ -128,21 +83,6 @@ function App() {
       updateTask('repair-task', event.payload);
     });
 
-    const unlistenInit = listen<string>("bottle-init-status", (event) => {
-      if (event.payload.includes("complete")) {
-        setInitStatus("Everything is ready. Sayonara, baby.");
-        setTimeout(() => {
-          setIsInitializing(false);
-          setShowCreateModal(false);
-          setNewBottleName("");
-          setCreateStep(1);
-          loadBottles();
-        }, 3000); 
-      } else {
-          addToLog(`[INIT] ${event.payload}`);
-      }
-    });
-
     const unlistenLib = listen<string>("library-changed", (event) => {
       if (selectedBottleRef.current && event.payload === selectedBottleRef.current.id) {
           handleScanApps();
@@ -161,28 +101,9 @@ function App() {
     return () => { 
       unlistenStatus.then(f => f()); 
       unlistenEngine.then(f => f());
-      unlistenInit.then(f => f());
       unlistenLib.then(f => f());
     };
   }, []);
-
-  useEffect(() => {
-    let interval: any;
-    if (isInitializing) {
-      interval = setInterval(() => {
-        setFlavorIndex(Math.floor(Math.random() * FLAVOR_TEXTS.length));
-      }, 5000);
-    } else {
-        setFlavorIndex(0);
-    }
-    return () => clearInterval(interval);
-  }, [isInitializing]);
-
-  useEffect(() => {
-    if (isInitializing) {
-        setInitStatus(FLAVOR_TEXTS[flavorIndex]);
-    }
-  }, [flavorIndex, isInitializing]);
 
   useEffect(() => {
     if (selectedBottle) {
@@ -235,24 +156,6 @@ function App() {
           setSelectedBottle(details);
       }
     } catch (e) { console.error(e); }
-  };
-
-  const handleCreateBottle = async () => {
-    if (!newBottleName.trim()) return;
-    try {
-      const bottle = await invoke<Bottle>("create_bottle", { name: newBottleName, environmentType: selectedEnv });
-      
-      if (selectedRunner) {
-        await invoke("set_bottle_engine", { bottleId: bottle.id, enginePath: selectedRunner.path });
-      }
-
-      setIsInitializing(true);
-      setInitStatus("Gathering the elements...");
-      await invoke("initialize_pro_bottle", { bottleId: bottle.id });
-    } catch (e) { 
-      addToLog(`Error: ${e}`); 
-      setIsInitializing(false);
-    }
   };
 
   const handleDeleteBottle = async (id: string) => {
@@ -351,11 +254,11 @@ function App() {
         <div className="flex-1 overflow-y-auto p-12 custom-scrollbar">
           <div className="flex justify-between items-center mb-16 border-b border-white/10 pb-8">
             <div className="flex items-center gap-4"><img src="/logo_pancho.svg" alt="Logo" className="h-16 w-auto" /></div>
-            <button onClick={() => { setCreateStep(1); setShowCreateModal(true); }} className="bg-white text-black px-8 py-3 font-black hover:bg-zinc-200 transition-all text-xs tracking-widest uppercase">New Bottle</button>
+            <button onClick={() => { setShowCreateModal(true); }} className="bg-white text-black px-8 py-3 font-black hover:bg-zinc-200 transition-all text-xs tracking-widest uppercase">New Bottle</button>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-8">
             <div 
-              onClick={() => { setCreateStep(1); setShowCreateModal(true); }}
+              onClick={() => { setShowCreateModal(true); }}
               className="border-2 border-dashed border-white/10 hover:border-white/40 hover:bg-white/5 transition-all aspect-[2/3] flex flex-col items-center justify-center gap-6 cursor-pointer group bg-zinc-900/20"
             >
               <div className="p-6 bg-white/5 rounded-full group-hover:scale-110 transition-transform">
@@ -521,75 +424,15 @@ function App() {
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-sm flex items-center justify-center p-6 z-[400]">
           <div className="bg-zinc-900 border border-white/10 p-12 w-full max-w-xl shadow-2xl">
-            {isInitializing ? (
-              <div className="flex flex-col items-center justify-center space-y-12 py-10">
-                <div className="relative">
-                  <div className="w-24 h-24 border-2 border-emerald-500/20 rounded-full animate-ping absolute inset-0" />
-                  <div className="w-24 h-24 border-t-2 border-emerald-500 rounded-full animate-spin relative z-10" />
-                  <Icons.Zap className="absolute inset-0 m-auto text-emerald-500 animate-pulse" size={32} />
-                </div>
-                <div className="text-center space-y-4">
-                  <h3 className="text-2xl font-black uppercase tracking-tighter italic text-white animate-pulse">
-                    {initStatus}
-                  </h3>
-                  <p className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.5em]">Constructing Environment</p>
-                </div>
-              </div>
-            ) : createStep === 1 ? (
-              <div className="space-y-10">
-                <h2 className="text-3xl font-black uppercase tracking-tight">Create Bottle</h2>
-                <input 
-                    autoFocus 
-                    value={newBottleName} 
-                    onChange={e => setNewBottleName(e.target.value)} 
-                    onKeyDown={e => e.key === 'Enter' && setCreateStep(2)}
-                    placeholder="NAME..." 
-                    className="w-full bg-black border border-white/10 p-6 outline-none focus:border-white font-bold tracking-widest uppercase" 
-                />
-                <div className="flex gap-px">
-                  <button onClick={() => setShowCreateModal(false)} className="flex-1 p-4 font-black text-xs uppercase bg-white/5 hover:bg-white/10 transition-all">Cancel</button>
-                  <button onClick={() => setCreateStep(2)} className="flex-1 bg-white text-black p-4 font-black text-xs uppercase hover:bg-zinc-200 transition-all">Next</button>
-                </div>
-              </div>
-            ) : createStep === 2 ? (
-              <div className="space-y-10">
-                <h2 className="text-3xl font-black uppercase tracking-tight">Select Runner</h2>
-                <div className="bg-black/20 p-4 border border-white/5 rounded-lg max-h-[300px] overflow-y-auto custom-scrollbar">
-                    <RunnerSelector 
-                        onSelect={setSelectedRunner} 
-                        selectedPath={selectedRunner?.path} 
-                    />
-                </div>
-                <div className="flex gap-px">
-                    <button onClick={() => setCreateStep(1)} className="flex-1 p-4 font-black text-xs uppercase bg-white/5 hover:bg-white/10 transition-all">Back</button>
-                    <button 
-                        onClick={() => setCreateStep(3)} 
-                        disabled={!selectedRunner}
-                        className="flex-1 bg-white text-black p-4 font-black text-xs uppercase hover:bg-zinc-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        Next
-                    </button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-10">
-                <h2 className="text-3xl font-black uppercase tracking-tight">Select Optimization</h2>
-                <div className="grid gap-4">
-                  <button onClick={() => setSelectedEnv("pro")} className={`p-6 border text-left transition-all ${selectedEnv === 'pro' ? 'bg-white text-black border-white shadow-[0_0_30px_rgba(255,255,255,0.1)]' : 'bg-black border-white/10 hover:border-white/30'}`}>
-                    <p className="font-black uppercase flex justify-between items-center">Pancho Pro Patch <Icons.Zap size={14} className={selectedEnv === 'pro' ? 'text-black' : 'text-emerald-500'} /></p>
-                    <p className="text-[10px] mt-2 opacity-60 font-bold uppercase tracking-tight">Optimized for Modern Games (DX11/12) and Steam stability.</p>
-                  </button>
-                  <button onClick={() => setSelectedEnv("classic")} className={`p-6 border text-left transition-all ${selectedEnv === 'classic' ? 'bg-white text-black border-white' : 'bg-black border-white/10 hover:border-white/30'}`}>
-                    <p className="font-black uppercase flex justify-between items-center">Classic Wine <Icons.History size={14} className={selectedEnv === 'classic' ? 'text-black' : 'text-zinc-500'} /></p>
-                    <p className="text-[10px] mt-2 opacity-60 font-bold uppercase tracking-tight">Best for retro games (DX9/10) and legacy applications.</p>
-                  </button>
-                </div>
-                <div className="flex gap-px">
-                  <button onClick={() => setCreateStep(2)} className="flex-1 p-4 font-black text-xs uppercase bg-white/5 hover:bg-white/10 transition-all">Back</button>
-                  <button onClick={handleCreateBottle} className="flex-[2] bg-emerald-600 hover:bg-emerald-500 text-white p-4 font-black uppercase transition-all italic">Launch Environment</button>
-                </div>
-              </div>
-            )}
+            <BottleWizard 
+                onCancel={() => {
+                    setShowCreateModal(false);
+                }}
+                onComplete={() => {
+                    setShowCreateModal(false);
+                    loadBottles();
+                }}
+            />
           </div>
         </div>
       )}
@@ -641,6 +484,8 @@ function App() {
                 </div>
                 
                 <div className="pt-8 flex flex-col gap-4">
+                    <GraphicsConfig bottleId={settingsTarget.id} />
+                    <div className="h-px bg-white/10 my-4" />
                     <button onClick={handleSaveSettings} className="w-full bg-white text-black p-5 font-black text-xs uppercase tracking-widest hover:bg-zinc-200 transition-all">Save Changes</button>
                     <button onClick={() => handleDeleteBottle(settingsTarget.id)} className="w-full border border-red-500/20 text-red-500 p-5 font-black text-xs uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all">Delete Bottle</button>
                 </div>
