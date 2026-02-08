@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-// ... (imports remain the same)
 import { invoke } from "@tauri-apps/api/core";
 import { open, ask } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import * as Icons from "lucide-react";
+import { RunnerSelector, WineRunner } from "@/components/RunnerSelector";
 
 interface Bottle {
   id: string;
@@ -20,6 +20,7 @@ interface DetectedApp {
   name: string;
   exe_path: string;
   is_priority: boolean;
+  pinned: boolean;
 }
 
 interface BackgroundTask {
@@ -88,6 +89,7 @@ function App() {
   useEffect(() => {
     selectedBottleRef.current = selectedBottle;
   }, [selectedBottle]);
+
   const [installedApps, setInstalledApps] = useState<DetectedApp[]>([]);
   const [log, setLog] = useState<string[]>([]);
   const [scanning, setScanning] = useState(false);
@@ -95,6 +97,7 @@ function App() {
   const [newBottleName, setNewBottleName] = useState("");
   const [createStep, setCreateStep] = useState(1);
   const [selectedEnv, setSelectedEnv] = useState<"classic" | "pro">("pro");
+  const [selectedRunner, setSelectedRunner] = useState<WineRunner | null>(null);
   const [activeTab, setActiveTab] = useState<"library" | "browse" | "analysis">("library");
   
   // Initialization State
@@ -104,15 +107,12 @@ function App() {
 
   // Analysis State
   const [analysisInfo, setAnalysisInfo] = useState<any>(null);
-  const [analyzing, setAnalyzing] = useState(false);
 
   // Notification State
   const [notification, setNotification] = useState<{ message: string, type: 'info' | 'warning' } | null>(null);
 
   // Engine & Tasks
-  const [hasProEngine, setHasProEngine] = useState(false);
-  const [tasks, setTasks] = useState<BackgroundTask[]>([]);
-  const [isTaskPanelMinimized, setIsTaskPanelMinimized] = useState(false);
+  const [, setTasks] = useState<BackgroundTask[]>([]);
 
   // Settings Modal State
   const [settingsTarget, setSettingsTarget] = useState<Bottle | null>(null);
@@ -137,14 +137,13 @@ function App() {
           setNewBottleName("");
           setCreateStep(1);
           loadBottles();
-        }, 3000); // Give them a bit more time to read the iconic line
+        }, 3000); 
       } else {
           addToLog(`[INIT] ${event.payload}`);
       }
     });
 
     const unlistenLib = listen<string>("library-changed", (event) => {
-      // Use ref to get actual current value in the closure
       if (selectedBottleRef.current && event.payload === selectedBottleRef.current.id) {
           handleScanApps();
           refreshBottleDetails();
@@ -163,6 +162,7 @@ function App() {
       unlistenStatus.then(f => f()); 
       unlistenEngine.then(f => f());
       unlistenInit.then(f => f());
+      unlistenLib.then(f => f());
     };
   }, []);
 
@@ -204,24 +204,19 @@ function App() {
     });
   };
 
-  const removeTask = (id: string) => setTasks(prev => prev.filter(t => t.id !== id));
-
   const checkEngine = async (): Promise<boolean> => {
     try {
       const status = await invoke<boolean>("check_engine_status");
-      setHasProEngine(status);
       return status;
     } catch (e) { return false; }
   };
 
   const handleAnalyzeApp = async (path: string) => {
-    setAnalyzing(true);
     setActiveTab("analysis");
     try {
       const info = await invoke("launch_installer", { path });
       setAnalysisInfo(info);
     } catch (e) { addToLog(`Analysis Error: ${e}`); }
-    finally { setAnalyzing(false); }
   };
 
   const loadBottles = async () => {
@@ -246,6 +241,11 @@ function App() {
     if (!newBottleName.trim()) return;
     try {
       const bottle = await invoke<Bottle>("create_bottle", { name: newBottleName, environmentType: selectedEnv });
+      
+      if (selectedRunner) {
+        await invoke("set_bottle_engine", { bottleId: bottle.id, enginePath: selectedRunner.path });
+      }
+
       setIsInitializing(true);
       setInitStatus("Gathering the elements...");
       await invoke("initialize_pro_bottle", { bottleId: bottle.id });
@@ -272,27 +272,6 @@ function App() {
       if (editCover !== settingsTarget.cover) await invoke("set_bottle_cover", { bottleId: settingsTarget.id, coverPath: editCover });
       setSettingsTarget(null);
       loadBottles();
-    } catch (e) { addToLog(`Error: ${e}`); }
-  };
-
-  const handleSetEngine = async () => {
-    if (!selectedBottle) return;
-    try {
-      const selected = await open({ multiple: false, title: "Select Wine/Engine Binary" });
-      if (selected && typeof selected === 'string') {
-        await invoke("set_bottle_engine", { bottleId: selectedBottle.id, enginePath: selected });
-        addToLog(`Engine set to: ${selected}`);
-        refreshBottleDetails();
-      }
-    } catch (e) { addToLog(`Error: ${e}`); }
-  };
-
-  const handleResetEngine = async () => {
-    if (!selectedBottle) return;
-    try {
-      await invoke("reset_bottle_engine", { bottleId: selectedBottle.id });
-      addToLog("Engine reset to default.");
-      refreshBottleDetails();
     } catch (e) { addToLog(`Error: ${e}`); }
   };
 
@@ -423,7 +402,13 @@ function App() {
                 {activeTab === "library" && (
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-8">
                         <div 
-                          onClick={() => open({ multiple: false, filters: [{ name: 'EXE', extensions: ['exe'] }] }).then(s => s && typeof s === 'string' && handlePinApp({ name: s.split('/').pop()?.replace('.exe', '') || "App", exe_path: s, is_priority: false }))}
+                          onClick={() => {
+                            open({ multiple: false, filters: [{ name: 'EXE', extensions: ['exe'] }] }).then(s => {
+                              if (s && typeof s === 'string') {
+                                handlePinApp({ name: s.split('/').pop()?.replace('.exe', '') || "App", exe_path: s, is_priority: false, pinned: true });
+                              }
+                            });
+                          }}
                           className="border-2 border-dashed border-white/10 hover:border-white/40 hover:bg-white/5 transition-all aspect-[2/3] flex flex-col items-center justify-center gap-4 cursor-pointer group"
                         >
                           <div className="p-4 bg-white/5 rounded-full group-hover:scale-110 transition-transform">
@@ -566,6 +551,26 @@ function App() {
                   <button onClick={() => setCreateStep(2)} className="flex-1 bg-white text-black p-4 font-black text-xs uppercase hover:bg-zinc-200 transition-all">Next</button>
                 </div>
               </div>
+            ) : createStep === 2 ? (
+              <div className="space-y-10">
+                <h2 className="text-3xl font-black uppercase tracking-tight">Select Runner</h2>
+                <div className="bg-black/20 p-4 border border-white/5 rounded-lg max-h-[300px] overflow-y-auto custom-scrollbar">
+                    <RunnerSelector 
+                        onSelect={setSelectedRunner} 
+                        selectedPath={selectedRunner?.path} 
+                    />
+                </div>
+                <div className="flex gap-px">
+                    <button onClick={() => setCreateStep(1)} className="flex-1 p-4 font-black text-xs uppercase bg-white/5 hover:bg-white/10 transition-all">Back</button>
+                    <button 
+                        onClick={() => setCreateStep(3)} 
+                        disabled={!selectedRunner}
+                        className="flex-1 bg-white text-black p-4 font-black text-xs uppercase hover:bg-zinc-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        Next
+                    </button>
+                </div>
+              </div>
             ) : (
               <div className="space-y-10">
                 <h2 className="text-3xl font-black uppercase tracking-tight">Select Optimization</h2>
@@ -579,7 +584,10 @@ function App() {
                     <p className="text-[10px] mt-2 opacity-60 font-bold uppercase tracking-tight">Best for retro games (DX9/10) and legacy applications.</p>
                   </button>
                 </div>
-                <button onClick={handleCreateBottle} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white p-6 font-black uppercase transition-all italic">Launch Environment</button>
+                <div className="flex gap-px">
+                  <button onClick={() => setCreateStep(2)} className="flex-1 p-4 font-black text-xs uppercase bg-white/5 hover:bg-white/10 transition-all">Back</button>
+                  <button onClick={handleCreateBottle} className="flex-[2] bg-emerald-600 hover:bg-emerald-500 text-white p-4 font-black uppercase transition-all italic">Launch Environment</button>
+                </div>
               </div>
             )}
           </div>

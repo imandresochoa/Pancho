@@ -1,5 +1,9 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod core;
+mod wine;
+mod bottle;
+mod gptk;
+mod integration_tests;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -308,7 +312,19 @@ pub fn run() {
             unpin_app,
             check_engine_status,
             download_engine,
-            run_shell_command
+            run_shell_command,
+            wine::runner::get_wine_runners,
+            bottle::template::get_bottle_templates,
+            bottle::template::get_template_by_id,
+            wine::registry::write_registry_entries,
+            wine::registry::set_dll_overrides,
+            gptk::d3dmetal::detect_d3dmetal,
+            gptk::d3dmetal::install_d3dmetal,
+            gptk::d3dmetal::verify_d3dmetal,
+            gptk::dll_override::set_graphics_backend,
+            wine::steam::install_steam,
+            wine::steam::launch_steam,
+            wine::steam::check_steam_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
