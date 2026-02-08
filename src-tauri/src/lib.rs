@@ -18,13 +18,52 @@ async fn run_installer(path: &str, bottle_id: &str, handle: tauri::AppHandle) ->
     let bottle = bottles.iter().find(|b| b.id == bottle_id)
         .ok_or("Bottle not found")?;
     
-    let custom_engine = bottle.engine_path.as_ref().map(|p| p.to_str().unwrap().to_string());
+    // Priority: 1. Manual User Selection, 2. Automated Pro Engine, 3. System Global Wine
+    let custom_engine = if let Some(path) = &bottle.engine_path {
+        Some(path.to_str().unwrap().to_string())
+    } else if let Some(pro_path) = core::engine::get_pro_engine_path(&handle) {
+        Some(pro_path.to_str().unwrap().to_string())
+    } else {
+        None
+    };
+
     core::runner::run_executable(path, &bottle.path, custom_engine)
+}
+
+#[tauri::command]
+async fn run_shell_command(command: String, description: String) -> Result<(), String> {
+    println!("Executing: {}", description);
+    let _ = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn check_engine_status(handle: tauri::AppHandle) -> Result<bool, String> {
+    Ok(core::engine::get_pro_engine_path(&handle).is_some())
+}
+
+#[tauri::command]
+async fn download_engine(handle: tauri::AppHandle) -> Result<(), String> {
+    core::engine::setup_gaming_engine(handle).await
 }
 
 #[tauri::command]
 async fn set_bottle_engine(bottle_id: &str, engine_path: &str, handle: tauri::AppHandle) -> Result<(), String> {
     core::bottle::set_bottle_engine(&handle, bottle_id, std::path::PathBuf::from(engine_path))
+}
+
+#[tauri::command]
+async fn reset_bottle_engine(bottle_id: &str, handle: tauri::AppHandle) -> Result<(), String> {
+    core::bottle::reset_bottle_engine(&handle, bottle_id)
+}
+
+#[tauri::command]
+async fn set_bottle_cover(bottle_id: &str, cover_path: &str, handle: tauri::AppHandle) -> Result<(), String> {
+    core::bottle::set_bottle_cover(&handle, bottle_id, cover_path)
 }
 
 #[tauri::command]
@@ -150,12 +189,17 @@ pub fn run() {
             delete_bottle,
             rename_bottle,
             set_bottle_engine,
+            reset_bottle_engine,
+            set_bottle_cover,
             scan_for_apps,
             open_bottle_dir,
             install_dx_runtime,
             get_bottle_details,
             pin_app,
-            unpin_app
+            unpin_app,
+            check_engine_status,
+            download_engine,
+            run_shell_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

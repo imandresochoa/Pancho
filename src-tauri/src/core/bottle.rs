@@ -181,3 +181,43 @@ pub fn set_bottle_engine(app_handle: &tauri::AppHandle, bottle_id: &str, engine_
 
     Ok(())
 }
+
+pub fn reset_bottle_engine(app_handle: &tauri::AppHandle, bottle_id: &str) -> Result<(), String> {
+    let bottles_dir = get_bottles_dir(app_handle)?;
+    let bottle_path = bottles_dir.join(bottle_id);
+    let config_path = bottle_path.join("pancho.json");
+
+    if !config_path.exists() {
+        return Err("Bottle config not found".to_string());
+    }
+
+    let config_str = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+    let mut bottle: Bottle = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+
+    bottle.engine_path = None;
+
+    let new_config_str = serde_json::to_string(&bottle).map_err(|e| e.to_string())?;
+    fs::write(config_path, new_config_str).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+pub fn set_bottle_cover(app_handle: &tauri::AppHandle, bottle_id: &str, cover_path: &str) -> Result<(), String> {
+    let bottles_dir = get_bottles_dir(app_handle)?;
+    let bottle_path = bottles_dir.join(bottle_id);
+    let config_path = bottle_path.join("pancho.json");
+
+    if !config_path.exists() {
+        return Err("Bottle config not found".to_string());
+    }
+
+    let config_str = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+    let mut bottle: Bottle = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
+
+    bottle.cover = cover_path.to_string();
+
+    let new_config_str = serde_json::to_string(&bottle).map_err(|e| e.to_string())?;
+    fs::write(config_path, new_config_str).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
