@@ -13,11 +13,13 @@ pub struct Bottle {
     pub path: PathBuf,
     pub created_at: u64,
     #[serde(default)]
-    pub pinned_apps: Vec<DetectedApp>,
+    pub app_registry: Vec<DetectedApp>,
     #[serde(default)]
     pub cover: String,
     #[serde(default)]
     pub engine_path: Option<PathBuf>,
+    #[serde(default)]
+    pub environment_type: String, // "classic" or "pro"
 }
 
 pub fn get_bottles_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -54,25 +56,25 @@ pub fn list_bottles(app_handle: &tauri::AppHandle) -> Result<Vec<Bottle>, String
     Ok(bottles)
 }
 
-pub fn add_pinned_app(app_handle: &tauri::AppHandle, bottle_id: &str, app: DetectedApp) -> Result<(), String> {
+pub fn add_pinned_app(app_handle: &tauri::AppHandle, bottle_id: &str, mut app: DetectedApp) -> Result<(), String> {
     let bottles_dir = get_bottles_dir(app_handle)?;
     let bottle_path = bottles_dir.join(bottle_id);
     let config_path = bottle_path.join("pancho.json");
 
-    if !config_path.exists() {
-        return Err("Bottle config not found".to_string());
-    }
+    if !config_path.exists() { return Err("Bottle config not found".to_string()); }
 
     let config_str = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
     let mut bottle: Bottle = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
 
-    if !bottle.pinned_apps.iter().any(|a| a.exe_path == app.exe_path) {
-        bottle.pinned_apps.push(app);
+    app.pinned = true;
+    if let Some(existing) = bottle.app_registry.iter_mut().find(|a| a.exe_path == app.exe_path) {
+        existing.pinned = true;
+    } else {
+        bottle.app_registry.push(app);
     }
 
     let new_config_str = serde_json::to_string(&bottle).map_err(|e| e.to_string())?;
     fs::write(config_path, new_config_str).map_err(|e| e.to_string())?;
-
     Ok(())
 }
 
@@ -81,22 +83,29 @@ pub fn remove_pinned_app(app_handle: &tauri::AppHandle, bottle_id: &str, exe_pat
     let bottle_path = bottles_dir.join(bottle_id);
     let config_path = bottle_path.join("pancho.json");
 
-    if !config_path.exists() {
-        return Err("Bottle config not found".to_string());
-    }
+    if !config_path.exists() { return Err("Bottle config not found".to_string()); }
 
     let config_str = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
     let mut bottle: Bottle = serde_json::from_str(&config_str).map_err(|e| e.to_string())?;
 
-    bottle.pinned_apps.retain(|a| a.exe_path != exe_path);
+    if let Some(app) = bottle.app_registry.iter_mut().find(|a| a.exe_path == exe_path) {
+        app.pinned = false; 
+    } else {
+        // If it wasn't in registry, add it as unpinned to "blacklist" it from Library
+        bottle.app_registry.push(DetectedApp {
+            name: exe_path.split('/').last().unwrap_or("App").replace(".exe", ""),
+            exe_path: exe_path.to_string(),
+            is_priority: false,
+            pinned: false,
+        });
+    }
 
     let new_config_str = serde_json::to_string(&bottle).map_err(|e| e.to_string())?;
     fs::write(config_path, new_config_str).map_err(|e| e.to_string())?;
-
     Ok(())
 }
 
-pub fn create_bottle(app_handle: &tauri::AppHandle, name: &str) -> Result<Bottle, String> {
+pub fn create_bottle(app_handle: &tauri::AppHandle, name: &str, env_type: &str) -> Result<Bottle, String> {
     let id = name.to_lowercase().replace(" ", "_");
     let bottles_dir = get_bottles_dir(app_handle)?;
     let bottle_path = bottles_dir.join(&id);
@@ -119,9 +128,10 @@ pub fn create_bottle(app_handle: &tauri::AppHandle, name: &str) -> Result<Bottle
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs(),
-        pinned_apps: Vec::new(),
+        app_registry: Vec::new(),
         cover,
         engine_path: None,
+        environment_type: env_type.to_string(),
     };
 
     let config_path = bottle_path.join("pancho.json");

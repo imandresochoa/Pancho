@@ -1,6 +1,7 @@
 use std::process::Command;
 use std::path::Path;
 use std::fs;
+use crate::core::patcher;
 
 #[derive(serde::Serialize)]
 pub struct RunResult {
@@ -10,8 +11,8 @@ pub struct RunResult {
 
 pub fn find_runner() -> Option<String> {
     // We now prioritize our UNIFIED PANCHO ENGINE above all else
+    // Note: The primary engine path is now passed dynamically from lib.rs
     let paths = [
-        "/Users/andresochoa/Library/Application Support/com.andresochoa.tauri-app/engines/pancho-pro-v1/bin/wine64",
         "/opt/homebrew/bin/gameportingtoolkit",
         "/usr/local/bin/gameportingtoolkit",
         "/Applications/Whisky.app/Contents/Resources/wine/bin/wine64",
@@ -25,45 +26,60 @@ pub fn find_runner() -> Option<String> {
     None
 }
 
-pub fn run_executable(exe_path: &str, prefix_path: &Path, custom_engine: Option<String>) -> Result<RunResult, String> {
+pub fn run_executable(exe_path: &str, prefix_path: &Path, custom_engine: Option<String>, env_type: &str) -> Result<std::process::Child, String> {
     let runner = if let Some(engine) = custom_engine {
         engine
     } else {
-        find_runner().ok_or("Pancho-Core Engine not found. Please complete Onboarding.")?
+        find_runner().ok_or("Pancho-Core Engine not found. Please create a Pro bottle to trigger setup.")?
     };
     
     if !prefix_path.exists() {
         fs::create_dir_all(&prefix_path).map_err(|e| e.to_string())?;
     }
 
+    // ONLY APPLY PANCHO PATCHES FOR PRO BOTTLES IF NOT ALREADY DONE
+    let patched_flag = prefix_path.join(".pancho_patched");
+    if env_type == "pro" && !patched_flag.exists() {
+        let _ = patcher::apply_modern_game_patches(&runner, prefix_path);
+        let _ = patcher::optimize_for_metal(&runner, prefix_path);
+        
+        if exe_path.to_lowercase().contains("steam") {
+            let _ = patcher::apply_steam_specific_patches(&runner, prefix_path);
+        }
+        let _ = std::fs::File::create(patched_flag);
+    }
+
+    let is_steam = exe_path.to_lowercase().contains("steam");
+
     let mut command = Command::new(&runner);
     command.env("WINEPREFIX", prefix_path.to_str().unwrap())
-           // UNIFIED PANCHO-CORE OPTIMIZATIONS
+           .env("WINEDLLOVERRIDES", "mscoree,mshtml=;d3d11,d3d12,dxgi=n;d3d9=b;dwrite=d;winemenubuilder.exe=d")
+           .env("WINE_SKIP_GECKO_INSTALLATION", "1")
+           .env("WINE_SKIP_MONO_INSTALLATION", "1")
            .env("WINEESYNC", "1")
            .env("WINEMSYNC", "1")
            .env("WINEDEBUG", "-all")
-           
-           // MEMORY MANAGEMENT (Fixes modern game crashes on Apple Silicon)
            .env("WINE_ASLR", "0")
            .env("WINE_FORCE_LARGE_ADDRESS_AWARE", "1")
-           
-           // GRAPHICS BRIDGE (The "CrossOver" Secret Sauce)
-           // We force the D3DMetal bridge which is required for DX11/12
-           .env("WINEDLLOVERRIDES", "d3d11,dxgi,d3d12,d3d9,dxgi=n;gameoverlayrenderer,gameoverlayrenderer64=d")
-           
-           // METAL PERFORMANCE
            .env("MTL_HUD_ENABLED", "1")
            .env("MVK_CONFIG_RESILIENT_REPORTING", "1")
            .env("MVK_CONFIG_GEOMETRY_SHADER", "1")
            .env("MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS", "1")
-           
+           .env("PANCHO_MACH_PORT", "1") 
+           .env("STEAM_FORCE_DESKTOPUI_OVERRIDE", "1")
+           .env("WINE_DISABLE_GPU_FOR_STEAM", "1")
            .arg(exe_path);
 
-    command.spawn()
+    if is_steam {
+        command.arg("-no-cef-sandbox")
+               .arg("-cef-disable-gpu")
+               .arg("-cef-disable-d3d11")
+               .arg("-all-non-sandbox");
+    }
+
+    println!("Pancho-Core: Spawning {}...", exe_path);
+    let child = command.spawn()
         .map_err(|e| format!("Failed to spawn Pancho-Core: {}", e))?;
 
-    Ok(RunResult {
-        success: true,
-        message: "Launched with Pancho-Core Unified Runtime".to_string(),
-    })
+    Ok(child)
 }

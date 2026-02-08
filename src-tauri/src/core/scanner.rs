@@ -7,6 +7,8 @@ pub struct DetectedApp {
     pub name: String,
     pub exe_path: String,
     pub is_priority: bool,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 pub fn scan_bottle_for_apps(bottle_path: &Path) -> Vec<DetectedApp> {
@@ -56,6 +58,7 @@ fn scan_dir(dir: &Path, apps: &mut Vec<DetectedApp>, priority_names: &[&str]) {
                         name,
                         exe_path: path.to_str().unwrap_or_default().to_string(),
                         is_priority,
+                        pinned: false,
                     });
                 }
             }

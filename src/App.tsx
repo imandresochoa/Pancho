@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+// ... (imports remain the same)
 import { invoke } from "@tauri-apps/api/core";
 import { open, ask } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import * as Icons from "lucide-react";
 
 interface Bottle {
@@ -10,9 +10,10 @@ interface Bottle {
   name: string;
   path: string;
   created_at: number;
-  pinned_apps?: DetectedApp[];
+  app_registry?: DetectedApp[];
   cover: string;
   engine_path?: string;
+  environment_type: string;
 }
 
 interface DetectedApp {
@@ -32,7 +33,7 @@ interface BackgroundTask {
 }
 
 const APP_ASSETS: Record<string, string> = {
-  "steam": "/covers/steam-cover.jpeg",
+  "steam": "/covers/steam_thumbnail.jpg",
   "default": "/covers/cover02.png"
 };
 
@@ -42,23 +43,76 @@ const glassyStyle = {
   border: "1px solid #333333"
 };
 
+const FLAVOR_TEXTS = [
+  "LEEEEEROY JENKINS!!!",
+  "It's dangerous to go alone! Take this.",
+  "I'll be back...",
+  "Say hello to my little friend!",
+  "To infinity and beyond!",
+  "Stay frosty, Pancho.",
+  "May the Force be with you.",
+  "Finish him!",
+  "Hey you, you're finally awake.",
+  "All your base are belong to us.",
+  "Do a barrel roll!",
+  "Here's looking at you, kid.",
+  "I'm gonna make him an offer he can't refuse.",
+  "Go ahead, make my day.",
+  "Bond. James Bond.",
+  "Why so serious?",
+  "I am your father.",
+  "Wait for it... legendary!",
+  "Houston, we have a problem.",
+  "Elementary, my dear Watson.",
+  "You're a wizard, Pancho.",
+  "Winter is coming.",
+  "Just keep swimming.",
+  "I am Iron Man.",
+  "Wasted...",
+  "Snake? Snake?! SNAAAAAAAKE!!!",
+  "Praise the Sun!",
+  "The cake is a lie.",
+  "A wild Pancho appeared!",
+  "Checking for imposters...",
+  "Sus as hell...",
+  "Fus Ro Dah!",
+  "War. War never changes.",
+  "Mire vuestra merced que aquellos no son gigantes..."
+];
+
 function App() {
-  const [isOnboarding, setIsOnboarding] = useState(false);
   const [bottles, setBottles] = useState<Bottle[]>([]);
   const [selectedBottle, setSelectedBottle] = useState<Bottle | null>(null);
+  const selectedBottleRef = useRef<Bottle | null>(null);
+
+  useEffect(() => {
+    selectedBottleRef.current = selectedBottle;
+  }, [selectedBottle]);
   const [installedApps, setInstalledApps] = useState<DetectedApp[]>([]);
   const [log, setLog] = useState<string[]>([]);
   const [scanning, setScanning] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newBottleName, setNewBottleName] = useState("");
-  const [activeTab, setActiveTab] = useState<"library" | "browse">("library");
+  const [createStep, setCreateStep] = useState(1);
+  const [selectedEnv, setSelectedEnv] = useState<"classic" | "pro">("pro");
+  const [activeTab, setActiveTab] = useState<"library" | "browse" | "analysis">("library");
   
-  // Engine & Onboarding State
+  // Initialization State
+  const [isInitializing, setIsInitializing] = useState(false);
+  const [initStatus, setInitStatus] = useState("");
+  const [flavorIndex, setFlavorIndex] = useState(0);
+
+  // Analysis State
+  const [analysisInfo, setAnalysisInfo] = useState<any>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+
+  // Notification State
+  const [notification, setNotification] = useState<{ message: string, type: 'info' | 'warning' } | null>(null);
+
+  // Engine & Tasks
   const [hasProEngine, setHasProEngine] = useState(false);
-  const [onboardingStep, setOnboardingStep] = useState(1);
   const [tasks, setTasks] = useState<BackgroundTask[]>([]);
   const [isTaskPanelMinimized, setIsTaskPanelMinimized] = useState(false);
-  const [verificationError, setVerificationError] = useState("");
 
   // Settings Modal State
   const [settingsTarget, setSettingsTarget] = useState<Bottle | null>(null);
@@ -74,6 +128,29 @@ function App() {
       updateTask('repair-task', event.payload);
     });
 
+    const unlistenInit = listen<string>("bottle-init-status", (event) => {
+      if (event.payload.includes("complete")) {
+        setInitStatus("Everything is ready. Sayonara, baby.");
+        setTimeout(() => {
+          setIsInitializing(false);
+          setShowCreateModal(false);
+          setNewBottleName("");
+          setCreateStep(1);
+          loadBottles();
+        }, 3000); // Give them a bit more time to read the iconic line
+      } else {
+          addToLog(`[INIT] ${event.payload}`);
+      }
+    });
+
+    const unlistenLib = listen<string>("library-changed", (event) => {
+      // Use ref to get actual current value in the closure
+      if (selectedBottleRef.current && event.payload === selectedBottleRef.current.id) {
+          handleScanApps();
+          refreshBottleDetails();
+      }
+    });
+
     const unlistenEngine = listen<string>("engine-status", (event) => {
       addToLog(`[ENGINE] ${event.payload}`);
       updateTask('engine-setup', event.payload);
@@ -85,16 +162,33 @@ function App() {
     return () => { 
       unlistenStatus.then(f => f()); 
       unlistenEngine.then(f => f());
+      unlistenInit.then(f => f());
     };
   }, []);
+
+  useEffect(() => {
+    let interval: any;
+    if (isInitializing) {
+      interval = setInterval(() => {
+        setFlavorIndex(Math.floor(Math.random() * FLAVOR_TEXTS.length));
+      }, 5000);
+    } else {
+        setFlavorIndex(0);
+    }
+    return () => clearInterval(interval);
+  }, [isInitializing]);
+
+  useEffect(() => {
+    if (isInitializing) {
+        setInitStatus(FLAVOR_TEXTS[flavorIndex]);
+    }
+  }, [flavorIndex, isInitializing]);
 
   useEffect(() => {
     if (selectedBottle) {
       handleScanApps();
       refreshBottleDetails();
       setActiveTab("library");
-    } else {
-      checkEngine();
     }
   }, [selectedBottle?.id]);
 
@@ -117,28 +211,17 @@ function App() {
       const status = await invoke<boolean>("check_engine_status");
       setHasProEngine(status);
       return status;
-    } catch (e) { 
-      console.error(e);
-      return false;
-    }
+    } catch (e) { return false; }
   };
 
-  const startAutomatedDeployment = async () => {
-    setIsOnboarding(false);
-    setIsTaskPanelMinimized(false);
-    updateTask('engine-setup', 'Initializing download...');
+  const handleAnalyzeApp = async (path: string) => {
+    setAnalyzing(true);
+    setActiveTab("analysis");
     try {
-      await invoke("download_engine");
-    } catch (e) {
-      updateTask('engine-setup', `Trigger Error: ${e}`);
-    }
-  };
-
-  const openEngineDir = async () => {
-      await invoke("run_shell_command", { 
-          command: "open \"$HOME/Library/Application Support/com.andresochoa.tauri-app/engines/\"",
-          description: "Opening engine directory"
-      });
+      const info = await invoke("launch_installer", { path });
+      setAnalysisInfo(info);
+    } catch (e) { addToLog(`Analysis Error: ${e}`); }
+    finally { setAnalyzing(false); }
   };
 
   const loadBottles = async () => {
@@ -153,7 +236,7 @@ function App() {
     try {
       const details = await invoke<Bottle>("get_bottle_details", { bottleId: selectedBottle.id });
       if (details) {
-          if (!details.pinned_apps) details.pinned_apps = [];
+          if (!details.app_registry) details.app_registry = [];
           setSelectedBottle(details);
       }
     } catch (e) { console.error(e); }
@@ -162,11 +245,14 @@ function App() {
   const handleCreateBottle = async () => {
     if (!newBottleName.trim()) return;
     try {
-      await invoke("create_bottle", { name: newBottleName });
-      setNewBottleName("");
-      setShowCreateModal(false);
-      loadBottles();
-    } catch (e) { addToLog(`Error: ${e}`); }
+      const bottle = await invoke<Bottle>("create_bottle", { name: newBottleName, environmentType: selectedEnv });
+      setIsInitializing(true);
+      setInitStatus("Gathering the elements...");
+      await invoke("initialize_pro_bottle", { bottleId: bottle.id });
+    } catch (e) { 
+      addToLog(`Error: ${e}`); 
+      setIsInitializing(false);
+    }
   };
 
   const handleDeleteBottle = async (id: string) => {
@@ -240,6 +326,7 @@ function App() {
   const handleUnpinApp = async (exe_path: string) => {
     if (!selectedBottle) return;
     try {
+      addToLog(`Unpinning ${exe_path.split('/').pop()}...`);
       await invoke("unpin_app", { bottleId: selectedBottle.id, exe_path: exe_path });
       await refreshBottleDetails();
     } catch (e) { console.error(e); }
@@ -248,6 +335,14 @@ function App() {
   const handleRun = async (path: string) => {
     if (!selectedBottle) return;
     try {
+      const fileName = path.split('/').pop()?.toLowerCase() || "";
+      if (fileName.includes("steam")) {
+          setNotification({ 
+            message: "Initializing Steam... Pancho-Core is registering system-level shims for Apple Silicon.", 
+            type: "warning" 
+          });
+          setTimeout(() => setNotification(null), 10000);
+      }
       addToLog(`Launching ${path.split('/').pop()}...`);
       await invoke("run_installer", { path, bottleId: selectedBottle.id });
     } catch (err) { addToLog(`Error: ${err}`); }
@@ -257,131 +352,325 @@ function App() {
 
   const getAsset = (name: string) => {
     const n = name.toLowerCase();
-    if (n === "steam") return APP_ASSETS.steam;
+    if (n.includes("steam")) return APP_ASSETS.steam;
     return APP_ASSETS.default;
   };
 
-  const pinnedList = selectedBottle?.pinned_apps || [];
-  const priorityApps = [...pinnedList, ...installedApps.filter(a => a.is_priority && !pinnedList.some(p => p.exe_path === a.exe_path))];
-  const regularApps = installedApps.filter(a => !a.is_priority && !pinnedList.some(p => p.exe_path === a.exe_path));
-
-  const isDeploying = tasks.some(t => t.id === 'engine-setup' && !t.isComplete && !t.hasError);
-
-  // --- RENDERING ---
-
-  if (isOnboarding) {
-    return (
-      <div className="h-screen w-screen bg-black text-white flex flex-col items-center justify-center p-12 overflow-hidden font-sans">
-        <div className="w-full max-w-4xl space-y-12">
-          <header className="flex justify-between items-center border-b border-white/10 pb-8">
-            <div className="flex items-center gap-4"><img src="/logo_pancho.svg" alt="Logo" className="h-12 w-auto" /></div>
-            <button onClick={() => setIsOnboarding(false)} className="p-2 text-zinc-500 hover:text-white transition-colors"><Icons.X size={32} /></button>
-          </header>
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-12">
-            <div className="md:col-span-4 space-y-12">
-               <div className="space-y-4"><h2 className="text-[10px] font-black text-emerald-500 tracking-[0.5em] uppercase">Core Activation</h2><h1 className="text-4xl font-black uppercase tracking-tight leading-none">Pancho-Core Unified Engine</h1></div>
-               <div className="space-y-4">{[{ s: 1, t: "Acquisition", d: "Obtain official Apple binaries" }, { s: 2, t: "Integration", d: "Inject Core into Pancho" }, { s: 3, t: "Optimization", d: "Verify Metal 3 hardware" }].map(step => (
-                    <div key={step.s} className={`flex items-center gap-6 p-4 border transition-all ${onboardingStep === step.s ? 'bg-white/5 border-white/20' : 'border-transparent opacity-30'}`}><span className="text-2xl font-black font-mono leading-none">{step.s}</span><div><p className="text-[10px] font-black uppercase tracking-widest">{step.t}</p><p className="text-[9px] text-zinc-500 font-medium uppercase tracking-tighter">{step.d}</p></div></div>
-                  ))}</div>
-            </div>
-            <div className="md:col-span-8 bg-zinc-900 border border-white/5 p-12 space-y-10 min-h-[500px] flex flex-col">
-               {onboardingStep === 1 && (
-                 <div className="space-y-10 flex-1"><div className="space-y-4"><h3 className="text-2xl font-black uppercase tracking-tight">Step 1: Obtain the "Magic Sauce"</h3><p className="text-zinc-400 text-sm leading-relaxed max-w-lg">To match CrossOver performance, we must use Apple's official <span className="text-white">Game Porting Toolkit 2</span>.</p></div>
-                    <div className="grid gap-4"><a href="https://developer.apple.com/games/game-porting-toolkit/" target="_blank" className="w-full bg-white text-black p-8 font-black text-xs uppercase tracking-[0.2em] hover:bg-zinc-200 flex items-center justify-center gap-4 transition-all shadow-xl shadow-white/5"><Icons.Apple size={20} /> Official Apple GPTK Page</a>
-                       <div className="flex items-center gap-4"><div className="flex-1 h-px bg-white/10"></div><span className="text-[8px] font-black text-zinc-600 uppercase tracking-widest">Or use our verified mirror</span><div className="flex-1 h-px bg-white/10"></div></div>
-                       <button onClick={startAutomatedDeployment} className="w-full border border-emerald-500/30 text-emerald-500 p-6 font-black text-xs uppercase tracking-[0.2em] hover:bg-emerald-500 hover:text-white transition-all">Deploy Optimized Pancho-Core (v23.7.1)</button></div>
-                    <div className="mt-auto pt-8 border-t border-white/5"><button onClick={() => setOnboardingStep(2)} className="text-[10px] font-black text-zinc-500 hover:text-white uppercase tracking-[0.2em] transition-colors flex items-center gap-2 italic">I have the binaries ready <Icons.ArrowRight size={14} /></button></div></div>
-               )}
-               {onboardingStep === 2 && (
-                 <div className="space-y-10 flex-1"><div className="space-y-4"><h3 className="text-2xl font-black uppercase tracking-tight">Deployment Location</h3><p className="text-zinc-400 text-sm leading-relaxed">Extract the archive contents into a new folder named <code className="text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5">pancho-pro-v1</code> within the directory below.</p></div>
-                    <div className="grid gap-6"><button onClick={openEngineDir} className="w-full bg-black border-2 border-white/10 hover:border-white p-8 flex items-center gap-8 transition-all group"><div className="p-4 bg-zinc-900 border border-white/5 group-hover:border-emerald-500 transition-colors"><Icons.FolderOpen className="text-zinc-500 group-hover:text-emerald-500" size={32} /></div><div className="text-left overflow-hidden"><p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-1">Deployment Directory</p><p className="text-[9px] font-mono text-zinc-400 truncate italic">~/Library/Application Support/com.andresochoa.tauri-app/engines/</p></div></button></div>
-                    <div className="mt-auto pt-8 border-t border-white/5 flex gap-4"><button onClick={() => setOnboardingStep(1)} className="px-8 py-4 border border-white/10 text-[10px] font-black uppercase tracking-widest hover:bg-white/5">Back</button><button onClick={() => { setOnboardingStep(3); setVerificationError(""); }} className="flex-1 bg-white text-black p-4 font-black text-xs uppercase tracking-widest hover:bg-zinc-200">Binaries are in place</button></div></div>
-               )}
-               {onboardingStep === 3 && (
-                 <div className="space-y-10 flex-1 flex flex-col items-center justify-center text-center"><div className="w-24 h-24 border-2 border-emerald-500 flex items-center justify-center bg-emerald-500/10 mb-4"><Icons.ShieldCheck className="text-emerald-500" size={48} /></div>
-                    <div className="space-y-4 max-w-sm"><h3 className="text-2xl font-black uppercase tracking-tight">System Activation</h3><p className="text-zinc-400 text-sm leading-relaxed">Pancho will now perform a final verification.</p></div>
-                    {verificationError && <div className="p-4 bg-red-500/10 border border-red-500/30 text-red-400 text-[10px] font-bold uppercase tracking-widest">{verificationError}</div>}
-                    <div className="w-full pt-12 space-y-4"><button onClick={async () => {
-                           const success = await checkEngine();
-                           if (success) setIsOnboarding(false);
-                           else setVerificationError("Engine not detected. Ensure structure: engines/pancho-pro-v1/bin/wine");
-                       }} className="w-full bg-emerald-600 text-white p-6 font-black text-xs uppercase tracking-[0.2em] hover:bg-emerald-500 transition-all">Verify and Finish</button>
-                       <button onClick={() => setOnboardingStep(2)} className="text-[10px] font-black text-zinc-600 hover:text-white uppercase tracking-widest transition-colors italic">Something went wrong? Re-check folder</button></div></div>
-               )}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const registry = selectedBottle?.app_registry || [];
+  const priorityApps = [
+    ...registry.filter(a => a.pinned), 
+    ...installedApps.filter(a => a.is_priority && !registry.some(r => r.exe_path === a.exe_path))
+  ];
+  const browseApps = [
+    ...installedApps.filter(a => !priorityApps.some(p => p.exe_path === a.exe_path)),
+    ...registry.filter(a => !a.pinned && !installedApps.some(i => i.exe_path === a.exe_path))
+  ];
 
   return (
     <div className="h-screen w-screen bg-black text-white flex flex-col overflow-hidden font-sans border-t-2 border-white">
       {!selectedBottle ? (
-        /* HOME VIEW */
         <div className="flex-1 overflow-y-auto p-12 custom-scrollbar">
           <div className="flex justify-between items-center mb-16 border-b border-white/10 pb-8">
             <div className="flex items-center gap-4"><img src="/logo_pancho.svg" alt="Logo" className="h-16 w-auto" /></div>
-            <div className="flex gap-4">
-              {!isDeploying && (
-                <button 
-                  onClick={() => { setIsOnboarding(true); setOnboardingStep(1); }} 
-                  className={`${hasProEngine ? 'border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500 hover:text-white' : 'bg-emerald-600 hover:bg-emerald-500 text-white'} px-8 py-3 font-black transition-all text-xs tracking-widest uppercase flex items-center gap-3`}
-                >
-                  {hasProEngine ? <Icons.RefreshCw size={16} /> : <Icons.Zap size={16} />}
-                  {hasProEngine ? "Update Engine" : "Deploy Pro Engine"}
-                </button>
-              )}
-              <button onClick={() => setShowCreateModal(true)} className="bg-white text-black px-8 py-3 font-black hover:bg-zinc-200 transition-all text-xs tracking-widest uppercase">New Bottle</button>
-            </div>
+            <button onClick={() => { setCreateStep(1); setShowCreateModal(true); }} className="bg-white text-black px-8 py-3 font-black hover:bg-zinc-200 transition-all text-xs tracking-widest uppercase">New Bottle</button>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-8">
+            <div 
+              onClick={() => { setCreateStep(1); setShowCreateModal(true); }}
+              className="border-2 border-dashed border-white/10 hover:border-white/40 hover:bg-white/5 transition-all aspect-[2/3] flex flex-col items-center justify-center gap-6 cursor-pointer group bg-zinc-900/20"
+            >
+              <div className="p-6 bg-white/5 rounded-full group-hover:scale-110 transition-transform">
+                <Icons.Box size={48} className="text-zinc-500 group-hover:text-emerald-500" />
+              </div>
+              <div className="text-center space-y-2">
+                <p className="text-[10px] font-black uppercase tracking-[0.4em] text-zinc-500 group-hover:text-white">Create New</p>
+                <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-600">Environment</p>
+              </div>
+            </div>
+
             {bottles.map(b => (
-              <div key={b.id} onClick={() => setSelectedBottle(b)} style={glassyStyle} className="group relative aspect-[2/3] overflow-hidden cursor-pointer hover:border-white hover:scale-[1.02] transition-all duration-300 will-change-transform">
-                <img src={b.cover || APP_ASSETS.default} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" /><div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent opacity-90 group-hover:opacity-100 transition-opacity" /><div className="absolute top-0 left-0 right-0 h-1/2 bg-gradient-to-b from-white/5 to-transparent opacity-50" /><div className="absolute inset-0 p-8 flex flex-col justify-end"><div className="space-y-2 group-hover:translate-y-[-8px] transition-transform duration-300"><h3 className="text-2xl font-black tracking-tighter leading-tight uppercase">{b.name}</h3><p className="text-[9px] text-zinc-500 font-mono truncate uppercase tracking-widest opacity-50">{b.id}</p></div><div className="mt-6 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-all duration-300"><span className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em]">Open Bottle</span><div className="bg-white text-black p-3"><Icons.ArrowRight size={20} fill="currentColor" /></div></div></div>
-                <div className="absolute top-6 right-6 flex gap-2 opacity-0 group-hover:opacity-100 transition-all scale-90 group-hover:scale-100 duration-300"><button onClick={(e) => { e.stopPropagation(); setSettingsTarget(b); setEditName(b.name); setEditCover(b.cover); }} className="p-3 text-white bg-black/80 border border-white/20 hover:bg-white hover:text-black transition-colors shadow-xl"><Icons.Settings size={18} /></button></div>
+              <div key={b.id} onClick={() => setSelectedBottle(b)} style={glassyStyle} className="group relative aspect-[2/3] overflow-hidden cursor-pointer hover:border-white hover:scale-[1.02] transition-all duration-300">
+                <img src={b.cover || APP_ASSETS.default} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent opacity-90 group-hover:opacity-100 transition-opacity" />
+                <div className="absolute inset-0 p-8 flex flex-col justify-end">
+                    <h3 className="text-2xl font-black tracking-tighter uppercase">{b.name}</h3>
+                    <p className="text-[10px] text-emerald-500 font-black uppercase tracking-widest">{b.environment_type}</p>
+                </div>
+                <div className="absolute top-6 right-6 flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                    <button onClick={(e) => { e.stopPropagation(); setSettingsTarget(b); setEditName(b.name); setEditCover(b.cover); }} className="p-3 text-white bg-black/80 border border-white/20 hover:bg-white hover:text-black transition-colors"><Icons.Settings size={18} /></button>
+                </div>
               </div>
             ))}
           </div>
         </div>
       ) : (
-        /* BOTTLE VIEW */
         <div className="flex-1 flex flex-col overflow-hidden">
-          <header className="h-16 border-b border-white/10 flex items-center px-6 gap-8 shrink-0 bg-zinc-950 backdrop-blur-md"><button onClick={() => setSelectedBottle(null)} className="p-2 hover:bg-zinc-800 transition-colors"><Icons.ArrowLeft size={24} /></button><img src="/logo_pancho.svg" alt="Logo" className="h-6 w-auto" /><nav className="flex gap-px bg-white/5 p-px border border-white/10"><button onClick={() => setActiveTab("library")} className={`px-6 py-2 text-[10px] font-black transition-all uppercase tracking-widest ${activeTab === 'library' ? 'bg-white text-black shadow-lg' : 'text-zinc-500 hover:text-white'}`}>Library</button><button onClick={() => setActiveTab("browse")} className={`px-6 py-2 text-[10px] font-black transition-all uppercase tracking-widest ${activeTab === 'browse' ? 'bg-white text-black shadow-lg' : 'text-zinc-500 hover:text-white'}`}>Browse</button></nav><div className="ml-auto flex gap-2"><button onClick={() => invoke("open_bottle_dir", { bottleId: selectedBottle.id })} className="bg-zinc-900 hover:bg-zinc-800 px-6 py-2 text-[10px] font-black flex items-center gap-3 transition-colors uppercase tracking-widest border-r border-white/10"><Icons.FolderOpen size={14} /> Files</button><button onClick={handleScanApps} className={`bg-zinc-900 hover:bg-zinc-800 px-4 py-2 transition-colors ${scanning ? 'animate-spin' : ''}`}><Icons.RefreshCw size={18} /></button></div></header>
-          <div className="flex-1 flex overflow-hidden"><div className="flex-1 overflow-y-auto custom-scrollbar p-8 bg-zinc-950">{activeTab === "library" ? (<div className="space-y-10 pb-10"><section className="space-y-6"><div className="flex items-center justify-between"><h2 className="text-[10px] font-black text-zinc-500 tracking-[0.4em] uppercase">Game Collection</h2><button onClick={() => open({ multiple: false, filters: [{ name: 'EXE', extensions: ['exe'] }] }).then(s => s && typeof s === 'string' && handlePinApp({ name: s.split('/').pop()?.replace('.exe', '') || "App", exe_path: s, is_priority: false }))} className="text-[9px] font-black text-slate-500 hover:text-white flex items-center gap-1 uppercase tracking-widest transition-colors">+ Pin Custom .EXE</button></div><div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-8">{priorityApps.map((app, i) => (<div key={i} style={glassyStyle} className="group relative aspect-[2/3] overflow-hidden cursor-pointer hover:border-white hover:scale-[1.02] transition-all duration-300 bg-zinc-900 will-change-transform" onClick={() => handleRun(app.exe_path)}><img src={getAsset(app.name)} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" onError={(e) => { (e.target as HTMLImageElement).src = APP_ASSETS.default; }} /><div className="absolute inset-0 bg-gradient-to-t from-black via-black/10 to-transparent opacity-90 group-hover:opacity-100 transition-opacity" /><div className="absolute top-0 left-0 right-0 h-1/2 bg-gradient-to-b from-white/5 to-transparent opacity-50" /><div className="absolute inset-0 p-6 flex flex-col justify-end"><div className="space-y-1 group-hover:translate-y-[-8px] transition-transform duration-300"><p className="text-xl font-black tracking-tighter leading-tight break-words uppercase">{app.name}</p><div className="flex items-center gap-2"><span className="text-[8px] font-black bg-emerald-500 text-white px-1.5 py-0.5 uppercase tracking-widest">Active</span></div></div><div className="mt-4 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-all duration-300"><span className="text-[9px] font-black text-zinc-400 uppercase tracking-[0.2em]">Launch Now</span><div className="bg-white text-black p-2"><Icons.PlayCircle className="w-6 h-6" fill="currentColor" /></div></div></div><button onClick={(e) => { e.stopPropagation(); handleUnpinApp(app.exe_path); }} className="absolute top-4 right-4 p-2 bg-black/80 border border-white/20 text-white hover:bg-red-500 transition-all opacity-0 group-hover:opacity-100 shadow-xl"><Icons.StarOff size={14} /></button></div>))}<div onClick={() => open({ multiple: false, filters: [{ name: 'EXE', extensions: ['exe'] }] }).then(s => s && typeof s === 'string' && handleRun(s))} style={glassyStyle} className="group relative aspect-[2/3] hover:border-white transition-all duration-300 cursor-pointer flex flex-col items-center justify-center gap-6 bg-zinc-900/40 shadow-2xl"><div className="absolute top-0 left-0 right-0 h-1/2 bg-gradient-to-b from-white/5 to-transparent opacity-50" /><div className="p-6 border border-white/10 group-hover:border-white transition-colors bg-black shadow-xl"><Icons.Plus className="text-zinc-500 group-hover:text-white" size={32} /></div><p className="font-black text-[10px] uppercase tracking-widest text-zinc-500 group-hover:text-white">Install New</p></div></div></section></div>) : (<div className="space-y-6 pb-10"><h2 className="text-[10px] font-black text-zinc-500 tracking-[0.4em] uppercase border-b border-white/10 pb-4">Internal File Browser</h2><div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-white/5 border border-white/10 shadow-2xl">{regularApps.map((app, i) => (<div key={i} className="p-6 bg-black border border-white/5 flex items-center justify-between group hover:bg-zinc-900 transition-all"><div className="flex items-center gap-6 overflow-hidden"><div className="p-2 bg-zinc-900 text-zinc-500 group-hover:text-white transition-colors"><Icons.Box size={20} /></div><div className="overflow-hidden"><p className="font-bold text-sm truncate">{app.name}</p><p className="text-[9px] text-zinc-600 truncate font-mono opacity-40">{app.exe_path.split('/').pop()}</p></div></div><div className="flex items-center gap-px bg-white/10"><button onClick={() => handlePinApp(app)} className="p-4 text-zinc-200 bg-black/40 hover:bg-white hover:text-black transition-all border-r border-white/5"><Icons.Star size={14} /></button><button onClick={() => handleRun(app.exe_path)} className="p-4 bg-black/40 text-zinc-400 hover:text-white hover:bg-blue-600 transition-all"><Icons.Play size={16} fill="currentColor" /></button></div></div>))}</div></div>)}</div>
-            <aside className="w-80 flex flex-col gap-px shrink-0 border-l border-white/10 bg-zinc-900/20 shadow-2xl"><div className="p-8 border-b border-white/10 bg-black/40 space-y-8"><div className="flex justify-between items-center"><h3 className="text-[10px] font-black text-zinc-500 tracking-[0.5em] uppercase">Environment</h3><button onClick={handleRepairDX} className="text-[9px] px-4 py-1 font-black transition-all border border-white/20 text-white hover:bg-white hover:text-black">REPAIR DX</button></div>            <div className="space-y-px bg-white/5 border border-white/10"><EnvStat label="ENGINE" value={selectedBottle.engine_path ? (selectedBottle.engine_path.includes("pancho-pro") ? "PRO" : "CUSTOM") : (hasProEngine ? "PRO (DEFAULT)" : "STABLE")} />
-               <div className="relative group/engine">
-                 <button onClick={handleSetEngine} className="w-full text-left p-6 bg-black hover:bg-white/5 transition-all group border-b border-white/10"><div className="flex justify-between items-center mb-2"><span className="text-[10px] font-black tracking-[0.2em] text-zinc-500 group-hover:text-white uppercase">Change Engine</span><Icons.Cpu className="w-4 h-4 text-zinc-600 group-hover:text-blue-400 transition-colors" /></div><div className="bg-zinc-900/50 p-3 border border-white/5 group-hover:border-blue-500/30 transition-colors"><p className="text-[9px] text-zinc-400 truncate font-mono uppercase tracking-widest leading-none">{selectedBottle.engine_path ? selectedBottle.engine_path.split('/').pop() : (hasProEngine ? "PANCHO-PRO-V1" : "SYSTEM WINE")}</p></div></button>
-                 {selectedBottle.engine_path && (
-                   <button 
-                     onClick={(e) => { e.stopPropagation(); handleResetEngine(); }}
-                     className="absolute top-2 right-2 p-1.5 bg-zinc-900 border border-white/10 text-[8px] font-black text-zinc-500 hover:text-white hover:border-white transition-all uppercase tracking-tighter"
-                     title="Restore Default Engine"
-                   >
-                     Restore Default
-                   </button>
-                 )}
-               </div>
-               <EnvStat label="ESYNC" value="ON" active /><EnvStat label="MSYNC" value="ON" active /></div></div><div className="flex-1 bg-black p-8 flex flex-col overflow-hidden shadow-inner"><div className="flex justify-between items-center mb-6 shrink-0 text-zinc-700"><h3 className="text-[10px] font-black tracking-widest uppercase">Output</h3><button onClick={() => setLog([])} className="text-[9px] font-black hover:text-zinc-400 uppercase tracking-widest opacity-20">Clear</button></div><div className="flex-1 overflow-y-auto space-y-2 font-mono text-[9px] custom-scrollbar">{log.map((l, i) => <div key={i} className="text-zinc-500 border-l border-zinc-800 pl-4 py-0.5 leading-tight italic">{l}</div>)}</div></div></aside></div></div>
+          <header className="h-16 border-b border-white/10 flex items-center px-6 gap-8 shrink-0 bg-zinc-950">
+            <button onClick={() => setSelectedBottle(null)} className="p-2 hover:bg-zinc-800 transition-colors"><Icons.ArrowLeft size={24} /></button>
+            <img src="/logo_pancho.svg" alt="Logo" className="h-6 w-auto" />
+            <nav className="flex gap-px bg-white/5 p-px border border-white/10">
+              <button onClick={() => setActiveTab("library")} className={`px-6 py-2 text-[10px] font-black transition-all uppercase tracking-widest ${activeTab === 'library' ? 'bg-white text-black' : 'text-zinc-500 hover:text-white'}`}>Library</button>
+              <button onClick={() => setActiveTab("browse")} className={`px-6 py-2 text-[10px] font-black transition-all uppercase tracking-widest ${activeTab === 'browse' ? 'bg-white text-black' : 'text-zinc-500 hover:text-white'}`}>Browse</button>
+              <button onClick={() => setActiveTab("analysis")} className={`px-6 py-2 text-[10px] font-black transition-all uppercase tracking-widest ${activeTab === 'analysis' ? 'bg-white text-black' : 'text-zinc-500 hover:text-white'}`}>Analysis</button>
+            </nav>
+            <div className="ml-auto flex gap-2">
+                <button onClick={() => invoke("open_bottle_dir", { bottleId: selectedBottle.id })} className="bg-zinc-900 hover:bg-zinc-800 px-6 py-2 text-[10px] font-black flex items-center gap-3 transition-colors uppercase tracking-widest border-r border-white/10"><Icons.FolderOpen size={14} /> Files</button>
+                <button onClick={handleScanApps} className={`bg-zinc-900 hover:bg-zinc-800 px-4 py-2 transition-colors ${scanning ? 'animate-spin' : ''}`}><Icons.RefreshCw size={18} /></button>
+            </div>
+          </header>
+          <div className="flex-1 flex overflow-hidden">
+            <main className="flex-1 overflow-y-auto custom-scrollbar p-8 bg-zinc-950">
+                {activeTab === "library" && (
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-8">
+                        <div 
+                          onClick={() => open({ multiple: false, filters: [{ name: 'EXE', extensions: ['exe'] }] }).then(s => s && typeof s === 'string' && handlePinApp({ name: s.split('/').pop()?.replace('.exe', '') || "App", exe_path: s, is_priority: false }))}
+                          className="border-2 border-dashed border-white/10 hover:border-white/40 hover:bg-white/5 transition-all aspect-[2/3] flex flex-col items-center justify-center gap-4 cursor-pointer group"
+                        >
+                          <div className="p-4 bg-white/5 rounded-full group-hover:scale-110 transition-transform">
+                            <Icons.Plus size={32} className="text-zinc-500 group-hover:text-white" />
+                          </div>
+                          <p className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-500 group-hover:text-white">Add Game</p>
+                        </div>
+
+                        {priorityApps.map((app, i) => (
+                            <div key={i} style={glassyStyle} className="group relative aspect-[2/3] overflow-hidden cursor-pointer hover:border-white transition-all bg-zinc-900" onClick={() => handleRun(app.exe_path)}>
+                                <img src={getAsset(app.name)} className="absolute inset-0 w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
+                                <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-80" />
+                                <div className="absolute inset-0 p-6 flex flex-col justify-end">
+                                    <p className="text-xl font-black uppercase tracking-tight">{app.name}</p>
+                                    <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                                        <button onClick={(e) => { e.stopPropagation(); handleAnalyzeApp(app.exe_path); }} className="mt-4 text-[9px] font-black text-zinc-500 hover:text-white uppercase tracking-widest border border-white/10 px-3 py-1 bg-black/50">Analyze</button>
+                                        <button onClick={(e) => { e.stopPropagation(); handleUnpinApp(app.exe_path); }} className="mt-4 text-[9px] font-black text-red-500 hover:text-red-400 uppercase tracking-widest border border-red-500/10 px-3 py-1 bg-black/50">Unpin</button>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                {activeTab === "browse" && (
+                    <div className="space-y-10">
+                        <header className="flex justify-between items-end">
+                            <div className="space-y-1">
+                                <h2 className="text-[10px] font-black text-emerald-500 tracking-[0.4em] uppercase">Detected Executables</h2>
+                                <p className="text-[9px] font-bold text-zinc-600 uppercase">Automated scan of drive_c</p>
+                            </div>
+                            <div className="flex items-center gap-3 bg-white/5 border border-white/10 px-4 py-2">
+                                <Icons.Info size={14} className="text-zinc-500" />
+                                <p className="text-[9px] font-bold text-zinc-400 uppercase tracking-tight">
+                                    Newly installed? Use the <span className="text-white">Refresh</span> button in the header.
+                                </p>
+                            </div>
+                        </header>
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-8">
+                            {browseApps.map((app, i) => (
+                                <div key={i} className="group relative aspect-[2/3] border border-white/5 hover:border-white/20 bg-zinc-900/40 p-6 flex flex-col transition-all cursor-pointer" onClick={() => handleRun(app.exe_path)}>
+                                    <div className="flex-1 flex items-center justify-center">
+                                        <Icons.FileCode size={48} className="text-zinc-800 group-hover:text-zinc-600 transition-colors" />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <p className="text-sm font-black uppercase tracking-tight truncate text-zinc-400 group-hover:text-white">{app.name}</p>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); handlePinApp(app); }}
+                                            className="w-full py-2 border border-white/5 text-[8px] font-black uppercase tracking-widest hover:bg-white hover:text-black transition-all"
+                                        >
+                                            Pin to Library
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+                {activeTab === "analysis" && analysisInfo && (
+                    <div className="space-y-8 max-w-4xl">
+                        <div className="bg-zinc-900 border border-white/10 p-10 space-y-6">
+                            <h2 className="text-3xl font-black uppercase tracking-tighter italic text-emerald-500">Native PE Analysis</h2>
+                            <div className="grid grid-cols-2 gap-8 font-mono text-xs">
+                                <div className="space-y-4">
+                                    <p className="text-zinc-500 uppercase tracking-widest text-[10px]">Architecture</p>
+                                    <p className="text-xl text-white font-black">{analysisInfo.machine}</p>
+                                </div>
+                                <div className="space-y-4">
+                                    <p className="text-zinc-500 uppercase tracking-widest text-[10px]">Entry Point</p>
+                                    <p className="text-xl text-white font-black">0x{analysisInfo.entry_point.toString(16)}</p>
+                                </div>
+                                <div className="space-y-4">
+                                    <p className="text-zinc-500 uppercase tracking-widest text-[10px]">Base Address</p>
+                                    <p className="text-xl text-white font-black">0x{analysisInfo.base_address.toString(16)}</p>
+                                </div>
+                                <div className="space-y-4">
+                                    <p className="text-zinc-500 uppercase tracking-widest text-[10px]">Sections</p>
+                                    <p className="text-xl text-white font-black">{analysisInfo.sections}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </main>
+            <aside className="w-80 border-l border-white/10 bg-zinc-900/20 p-8 space-y-8 flex flex-col">
+                <div className="space-y-4">
+                    <div className="flex justify-between items-center">
+                        <h3 className="text-[10px] font-black text-zinc-500 tracking-[0.5em] uppercase">Environment</h3>
+                        <button onClick={() => handleRepairDX()} className="text-[8px] border border-white/10 px-2 py-1 hover:bg-white hover:text-black transition-all font-black">REPAIR</button>
+                    </div>
+                    <div className="bg-black border border-white/10 divide-y divide-white/5">
+                        <EnvStat label="TYPE" value={selectedBottle.environment_type} active />
+                        <EnvStat label="ENGINE" value={selectedBottle.engine_path ? "CUSTOM" : "PANCHO-PRO"} active />
+                        <EnvStat label="IPC BRIDGE" value="MACH-PORT" active />
+                    </div>
+                </div>
+                <div className="flex-1 bg-black p-6 flex flex-col overflow-hidden border border-white/5">
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-[10px] font-black tracking-widest uppercase text-zinc-700">Output</h3>
+                        <button onClick={() => setLog([])} className="text-[8px] opacity-20 hover:opacity-100">CLEAR</button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto space-y-2 font-mono text-[9px] custom-scrollbar text-zinc-500 italic">
+                        {log.map((l, i) => <div key={i}>{l}</div>)}
+                    </div>
+                </div>
+            </aside>
+          </div>
+        </div>
       )}
 
-      {/* Task Manager Overlay */}
-      <div className={`fixed bottom-8 right-8 z-[300] transition-all duration-500 ${isTaskPanelMinimized ? 'translate-y-[calc(100%-48px)]' : ''}`}>{tasks.length > 0 && (<div style={glassyStyle} className="w-80 bg-zinc-900 border border-white/10 shadow-[0_30px_60px_rgba(0,0,0,0.8)]"><header className="bg-zinc-800/50 p-4 flex justify-between items-center border-b border-white/10"><div className="flex items-center gap-3"><div className="relative"><Icons.Activity className="text-emerald-500 animate-pulse" size={16} />{tasks.length > 1 && <span className="absolute -top-2 -right-2 bg-emerald-500 text-black text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center">{tasks.length}</span>}</div><h4 className="text-[10px] font-black uppercase tracking-widest">Active Processes</h4></div><button onClick={() => setIsTaskPanelMinimized(!isTaskPanelMinimized)} className="p-1 hover:bg-white/10 transition-colors">{isTaskPanelMinimized ? <Icons.ChevronUp size={16} /> : <Icons.ChevronDown size={16} />}</button></header><div className="p-6 space-y-6 max-h-[400px] overflow-y-auto custom-scrollbar">{tasks.map(task => (<div key={task.id} className={`space-y-3 ${task.isComplete ? 'opacity-50' : ''}`}><div className="flex justify-between items-start"><div className="space-y-1"><p className="text-[10px] font-black uppercase tracking-widest">{task.title}</p><p className={`text-[9px] font-mono leading-tight ${task.hasError ? 'text-red-400' : 'text-zinc-500'}`}>{task.status}</p></div><div className="flex gap-1">{task.isComplete || task.hasError ? (<button onClick={() => removeTask(task.id)} className="p-1 text-zinc-600 hover:text-white transition-colors"><Icons.X size={14} /></button>) : (<Icons.Loader2 className="animate-spin text-zinc-600" size={14} />)}</div></div>{!task.isComplete && !task.hasError && (<div className="h-0.5 w-full bg-zinc-800 overflow-hidden"><div className="h-full bg-emerald-500 animate-progress-indeterminate origin-left" /></div>)}</div>))}</div></div>)}</div>
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black/95 backdrop-blur-sm flex items-center justify-center p-6 z-[400]">
+          <div className="bg-zinc-900 border border-white/10 p-12 w-full max-w-xl shadow-2xl">
+            {isInitializing ? (
+              <div className="flex flex-col items-center justify-center space-y-12 py-10">
+                <div className="relative">
+                  <div className="w-24 h-24 border-2 border-emerald-500/20 rounded-full animate-ping absolute inset-0" />
+                  <div className="w-24 h-24 border-t-2 border-emerald-500 rounded-full animate-spin relative z-10" />
+                  <Icons.Zap className="absolute inset-0 m-auto text-emerald-500 animate-pulse" size={32} />
+                </div>
+                <div className="text-center space-y-4">
+                  <h3 className="text-2xl font-black uppercase tracking-tighter italic text-white animate-pulse">
+                    {initStatus}
+                  </h3>
+                  <p className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.5em]">Constructing Environment</p>
+                </div>
+              </div>
+            ) : createStep === 1 ? (
+              <div className="space-y-10">
+                <h2 className="text-3xl font-black uppercase tracking-tight">Create Bottle</h2>
+                <input 
+                    autoFocus 
+                    value={newBottleName} 
+                    onChange={e => setNewBottleName(e.target.value)} 
+                    onKeyDown={e => e.key === 'Enter' && setCreateStep(2)}
+                    placeholder="NAME..." 
+                    className="w-full bg-black border border-white/10 p-6 outline-none focus:border-white font-bold tracking-widest uppercase" 
+                />
+                <div className="flex gap-px">
+                  <button onClick={() => setShowCreateModal(false)} className="flex-1 p-4 font-black text-xs uppercase bg-white/5 hover:bg-white/10 transition-all">Cancel</button>
+                  <button onClick={() => setCreateStep(2)} className="flex-1 bg-white text-black p-4 font-black text-xs uppercase hover:bg-zinc-200 transition-all">Next</button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-10">
+                <h2 className="text-3xl font-black uppercase tracking-tight">Select Optimization</h2>
+                <div className="grid gap-4">
+                  <button onClick={() => setSelectedEnv("pro")} className={`p-6 border text-left transition-all ${selectedEnv === 'pro' ? 'bg-white text-black border-white shadow-[0_0_30px_rgba(255,255,255,0.1)]' : 'bg-black border-white/10 hover:border-white/30'}`}>
+                    <p className="font-black uppercase flex justify-between items-center">Pancho Pro Patch <Icons.Zap size={14} className={selectedEnv === 'pro' ? 'text-black' : 'text-emerald-500'} /></p>
+                    <p className="text-[10px] mt-2 opacity-60 font-bold uppercase tracking-tight">Optimized for Modern Games (DX11/12) and Steam stability.</p>
+                  </button>
+                  <button onClick={() => setSelectedEnv("classic")} className={`p-6 border text-left transition-all ${selectedEnv === 'classic' ? 'bg-white text-black border-white' : 'bg-black border-white/10 hover:border-white/30'}`}>
+                    <p className="font-black uppercase flex justify-between items-center">Classic Wine <Icons.History size={14} className={selectedEnv === 'classic' ? 'text-black' : 'text-zinc-500'} /></p>
+                    <p className="text-[10px] mt-2 opacity-60 font-bold uppercase tracking-tight">Best for retro games (DX9/10) and legacy applications.</p>
+                  </button>
+                </div>
+                <button onClick={handleCreateBottle} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white p-6 font-black uppercase transition-all italic">Launch Environment</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
-      {/* Shared Modals */}
-      {showCreateModal && (<div className="fixed inset-0 bg-black/95 backdrop-blur-sm flex items-center justify-center p-6 z-[400]"><div className="bg-zinc-900 border border-white/10 p-12 w-full max-md shadow-2xl"><h2 className="text-3xl font-black uppercase tracking-tight">Create Bottle</h2><input autoFocus value={newBottleName} onChange={e => setNewBottleName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCreateBottle()} placeholder="NAME..." className="w-full bg-black border border-white/10 p-5 outline-none focus:border-white font-bold tracking-widest" /><div className="flex gap-px bg-white/10 border border-white/10"><button onClick={() => setShowCreateModal(false)} className="flex-1 p-4 font-black text-xs opacity-50 uppercase tracking-widest hover:bg-white/5">Cancel</button><button onClick={handleCreateBottle} className="flex-1 bg-white text-black p-4 font-black text-xs uppercase tracking-widest hover:bg-zinc-200">Create</button></div></div></div>)}
-      {settingsTarget && (<div className="fixed inset-0 bg-black/95 backdrop-blur-sm flex items-center justify-center p-6 z-[400] overflow-y-auto"><div className="bg-zinc-900 border border-white/10 p-12 w-full max-w-2xl shadow-2xl my-auto"><div className="flex justify-between items-start"><div><h2 className="text-3xl font-black uppercase tracking-tight">Bottle Settings</h2><p className="text-[10px] text-zinc-500 font-mono uppercase tracking-widest mt-2">{settingsTarget.id}</p></div><button onClick={() => setSettingsTarget(null)} className="p-2 text-zinc-500 hover:text-white"><Icons.X size={24} /></button></div><div className="grid grid-cols-1 md:grid-cols-2 gap-12"><div className="space-y-6"><div style={glassyStyle} className="aspect-[2/3] w-full relative overflow-hidden"><img src={editCover || APP_ASSETS.default} className="absolute inset-0 w-full h-full object-cover" /><div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-60" /><div className="absolute inset-0 p-6 flex flex-col justify-end"><p className="text-xl font-black uppercase tracking-tight truncate">{editName}</p></div></div><button onClick={() => setEditCover("")} className="w-full p-4 text-[10px] font-black uppercase tracking-widest bg-black border border-white/10 hover:text-red-500 transition-colors">Clear Thumbnail</button></div><div className="space-y-8"><div className="space-y-3"><label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Display Name</label><input value={editName} onChange={e => setEditName(e.target.value)} className="w-full bg-black border border-white/10 p-5 outline-none focus:border-white font-bold tracking-widest" /></div><div className="space-y-3"><label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Custom Thumbnail URL</label><input value={editCover} onChange={e => setEditCover(e.target.value)} placeholder="https://..." className="w-full bg-black border border-white/10 p-5 outline-none focus:border-white font-bold tracking-widest text-[10px]" /></div><div className="pt-8 border-t border-white/5 space-y-4"><button onClick={handleSaveSettings} className="w-full bg-white text-black p-5 font-black text-xs uppercase tracking-widest hover:bg-zinc-200">Save Changes</button><button onClick={() => handleDeleteBottle(settingsTarget.id)} className="w-full p-5 font-black text-xs uppercase tracking-widest text-red-500 hover:bg-red-500/10 border border-red-500/20 transition-colors">Delete Bottle</button></div></div></div></div></div>)}
+      {settingsTarget && (
+        <div className="fixed inset-0 bg-black/95 backdrop-blur-sm flex items-center justify-center p-6 z-[400] overflow-y-auto">
+          <div className="bg-zinc-900 border border-white/10 p-12 w-full max-w-2xl shadow-2xl my-auto">
+            <div className="flex justify-between items-start mb-12">
+              <div>
+                <h2 className="text-3xl font-black uppercase tracking-tight">Bottle Settings</h2>
+                <p className="text-[10px] text-zinc-500 font-mono uppercase tracking-widest mt-2">{settingsTarget.id}</p>
+              </div>
+              <button onClick={() => setSettingsTarget(null)} className="p-2 text-zinc-500 hover:text-white transition-colors">
+                <Icons.X size={24} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+              <div className="space-y-6">
+                <div style={glassyStyle} className="aspect-[2/3] w-full relative overflow-hidden bg-black">
+                  <img src={editCover || APP_ASSETS.default} className="absolute inset-0 w-full h-full object-cover" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-60" />
+                  <div className="absolute inset-0 p-6 flex flex-col justify-end">
+                    <p className="text-xl font-black uppercase tracking-tight truncate">{editName}</p>
+                  </div>
+                </div>
+                <button onClick={() => setEditCover("")} className="w-full p-4 text-[10px] font-black uppercase tracking-widest bg-black border border-white/10 hover:text-red-500 transition-colors">
+                  Clear Thumbnail
+                </button>
+              </div>
+
+              <div className="space-y-8">
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Display Name</label>
+                  <input 
+                    value={editName} 
+                    onChange={e => setEditName(e.target.value)} 
+                    className="w-full bg-black border border-white/10 p-5 outline-none focus:border-white font-bold tracking-widest" 
+                  />
+                </div>
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Custom Thumbnail URL</label>
+                  <input 
+                    value={editCover} 
+                    onChange={e => setEditCover(e.target.value)} 
+                    placeholder="https://..." 
+                    className="w-full bg-black border border-white/10 p-5 outline-none focus:border-white font-bold tracking-widest text-xs" 
+                  />
+                </div>
+                
+                <div className="pt-8 flex flex-col gap-4">
+                    <button onClick={handleSaveSettings} className="w-full bg-white text-black p-5 font-black text-xs uppercase tracking-widest hover:bg-zinc-200 transition-all">Save Changes</button>
+                    <button onClick={() => handleDeleteBottle(settingsTarget.id)} className="w-full border border-red-500/20 text-red-500 p-5 font-black text-xs uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all">Delete Bottle</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {notification && (
+        <div className="fixed bottom-8 right-8 z-[500] animate-in fade-in slide-in-from-bottom-4 duration-700">
+          <div className={`flex items-center gap-5 p-5 border backdrop-blur-xl ${notification.type === 'warning' ? 'bg-black/80 border-emerald-500/30 shadow-2xl' : 'bg-zinc-900/90 border-white/10'} max-w-sm`}>
+            <div className={`p-2 rounded-full ${notification.type === 'warning' ? 'bg-emerald-500/10' : 'bg-white/5'}`}>
+              <Icons.Zap className={notification.type === 'warning' ? 'text-emerald-500' : 'text-white'} size={14} />
+            </div>
+            <div className="flex-1 space-y-0.5">
+              <p className="text-[9px] font-black uppercase tracking-[0.3em] text-zinc-500">System Trace</p>
+              <p className="text-[10px] font-medium leading-relaxed text-zinc-200 uppercase tracking-tight">
+                {notification.message}
+              </p>
+            </div>
+            <button onClick={() => setNotification(null)} className="p-1 text-zinc-600 hover:text-white transition-colors">
+              <Icons.X size={14} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 function EnvStat({ label, value, active = false }: { label: string, value: string, active?: boolean }) {
     return (
-        <div className="flex justify-between items-center p-4 bg-black">
+        <div className="flex justify-between items-center p-4">
             <span className="text-[10px] font-black tracking-widest opacity-30 uppercase">{label}</span>
-            <span className={`text-[10px] font-black tracking-widest ${active ? 'text-emerald-500' : 'text-zinc-500'}`}>{value}</span>
+            <span className={`text-[10px] font-black tracking-widest ${active ? 'text-emerald-500' : 'text-zinc-500'} uppercase`}>{value}</span>
         </div>
-    )
+    );
 }
 
 export default App;

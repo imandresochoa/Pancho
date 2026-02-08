@@ -16,12 +16,13 @@ pub fn get_pro_engine_path(app_handle: &tauri::AppHandle) -> Option<PathBuf> {
     let engines_dir = get_engines_dir(app_handle).ok()?;
     let engine_folder = engines_dir.join("pancho-pro-v1");
     
-    // Very flexible search to handle different extraction styles
+    // Prioritize 'wine' wrapper as it handles WoW64/32-on-64 more reliably
     let possible_paths = [
-        engine_folder.join("bin").join("wine64"),
         engine_folder.join("bin").join("wine"),
+        engine_folder.join("bin").join("wine64"),
+        engine_folder.join("wine-crossover-23.7.1-1-osx64").join("bin").join("wine"),
         engine_folder.join("wine-crossover-23.7.1-1-osx64").join("bin").join("wine64"),
-        engine_folder.join("wine-crossover-23.7.1-osx64").join("bin").join("wine64"),
+        engine_folder.join("Contents").join("Resources").join("wine").join("bin").join("wine"),
         engine_folder.join("Contents").join("Resources").join("wine").join("bin").join("wine64"),
     ];
 
